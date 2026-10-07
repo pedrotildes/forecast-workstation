@@ -43,19 +43,24 @@ jobs:
 
       # A green build is not enough: start the frozen app headless and require
       # /api/health to answer (catches missing modules / native libraries).
-      - name: Smoke test (macOS)
-        if: runner.os == 'macOS'
+      - name: Smoke test (start bundle, render a map and a sounding)
         run: |
-          FORECAST_HEADLESS=1 "backend/dist/Forecast Workstation.app/Contents/MacOS/ForecastWorkstation" &
-          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8766/api/health && exit 0; sleep 2; done
-          echo "app did not start"; exit 1
-
-      - name: Smoke test (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          FORECAST_HEADLESS=1 backend/dist/ForecastWorkstation/ForecastWorkstation.exe &
-          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8766/api/health && exit 0; sleep 2; done
-          echo "app did not start"; exit 1
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            EXE="backend/dist/Forecast Workstation.app/Contents/MacOS/ForecastWorkstation"
+          else
+            EXE="backend/dist/ForecastWorkstation/ForecastWorkstation.exe"
+          fi
+          FORECAST_HEADLESS=1 "$EXE" &
+          B=http://127.0.0.1:8766
+          up=0
+          for i in $(seq 1 90); do curl -sf $B/api/health && { up=1; break; }; sleep 2; done
+          [ $up = 1 ] || { echo "app did not start"; exit 1; }
+          RUN=$(curl -sf $B/api/models/ecmwf/runs | python -c "import sys,json; print(json.load(sys.stdin)[0]['run'])")
+          echo "ECMWF run $RUN"
+          # exercises GRIB download + ecCodes + MetPy + the spawn-based render pool
+          curl -sf -o snd.png "$B/api/sounding.png?model=ecmwf&run=$RUN&step=24&lat=38.72&lon=-9.14"
+          curl -sf -o map.png "$B/api/map?model=ecmwf&run=$RUN&step=24&region=iberia&preset=t850"
+          python -c "import sys; [sys.exit(f + ' is not a PNG') for f in ('snd.png','map.png') if open(f,'rb').read(8) != bytes([137,80,78,71,13,10,26,10])]; print('render OK')"
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
