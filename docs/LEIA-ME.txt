@@ -1,0 +1,127 @@
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                    ║
+║      FORECAST WORKSTATION — Previsão Numérica do Tempo             ║
+║      Instruções de instalação                                      ║
+║                                                                    ║
+╚══════════════════════════════════════════════════════════════════╝
+
+O QUE É
+-------
+Estação técnica de previsão do tempo com os modelos GFS (NOAA),
+ECMWF IFS e ECMWF AIFS, a partir dos dados originais (GRIB2):
+
+  • Mapas de previsão com camadas combináveis (sombreado, isolinhas,
+    vento) e 19 produtos prontos — pressão, precipitação, 500/850/
+    250 hPa, θe, CAPE, temperaturas máxima/mínima e anomalias…
+  • Sondagens previstas (Skew-T estilo RAOB) com hodógrafa e índices.
+  • Meteogramas (com secção tempo-altura no GFS).
+  • Comparação de modelos: mapas lado a lado, diferenças, sondagens
+    e meteogramas sobrepostos.
+  • Vagas de calor e de frio (critério IPMA/OMM) e sinal do
+    ensemble ECMWF (51 membros).
+  • Satélite Meteosat (EUMETSAT) e radar, animados.
+
+IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
+(vai buscar os dados dos modelos, satélite e radar em tempo real).
+
+VERSÃO 1.0.0 (07/10/2026) — primeira versão.
+
+Ficheiros nesta pasta:
+  • Forecast-Workstation-macOS-AppleSilicon.zip   → para Mac (Apple Silicon)
+  • Forecast-Workstation-Windows.zip              → para Windows
+  • LEIA-ME.txt                                   → este ficheiro
+
+
+════════════════════════════════════════════════════════════════════
+  🍎  INSTALAÇÃO NO MAC   (Forecast-Workstation-macOS-AppleSilicon.zip)
+════════════════════════════════════════════════════════════════════
+
+⚠️ Só funciona em Macs com chip Apple Silicon (M1, M2, M3, M4).
+   NÃO funciona em Macs antigos com processador Intel.
+
+1) Faz duplo-clique no zip para o extrair.
+   Fica um ficheiro "Forecast Workstation.app".
+
+2) Arrasta o "Forecast Workstation.app" para a pasta Aplicações (opcional).
+
+3) PRIMEIRA ABERTURA (importante!):
+   A app não está assinada, por isso o macOS bloqueia-a à primeira.
+   Para abrir:
+      • Clica com o botão DIREITO no "Forecast Workstation.app"
+      • Escolhe "Abrir"
+      • Na janela de aviso, clica outra vez em "Abrir"
+   (só é preciso fazer isto DA PRIMEIRA VEZ; depois abre normalmente)
+
+   Se aparecer "…está danificado e não pode ser aberto", abre a
+   aplicação "Terminal" e cola este comando (ajusta o caminho se puseste
+   a app noutro sítio), seguido de Enter:
+
+      xattr -dr com.apple.quarantine "/Applications/Forecast Workstation.app"
+
+   Depois volta a abrir com botão direito → Abrir.
+
+4) O PRIMEIRO ARRANQUE é lento (até ~1 minuto — o Mac está a verificar
+   a app). Os arranques seguintes são rápidos. A app abre numa janela
+   própria.
+
+
+════════════════════════════════════════════════════════════════════
+  🪟  INSTALAÇÃO NO WINDOWS   (Forecast-Workstation-Windows.zip)
+════════════════════════════════════════════════════════════════════
+
+Requisitos: Windows 10 ou 11 (64 bits).
+
+1) Clica com o botão direito no zip → "Extrair tudo…".
+   Fica uma pasta chamada "ForecastWorkstation".
+
+   ⚠️ MANTÉM A PASTA INTEIRA. O "ForecastWorkstation.exe" precisa de
+      todos os ficheiros que estão dentro dessa pasta — não movas só o .exe.
+
+2) Abre a pasta e faz duplo-clique em "ForecastWorkstation.exe".
+
+3) AVISO DO WINDOWS (SmartScreen):
+   Como a app não está assinada, o Windows mostra um aviso azul
+   ("O Windows protegeu o seu PC"). Para continuar:
+      • Clica em "Mais informações"
+      • Clica em "Executar mesmo assim"
+   (só da primeira vez)
+
+4) Se pedir o "Microsoft Edge WebView2":
+   Normalmente já vem instalado no Windows 10/11. Se não, instala-o
+   gratuitamente aqui e volta a abrir a app:
+      https://developer.microsoft.com/microsoft-edge/webview2/
+
+5) O PRIMEIRO ARRANQUE é mais lento (o antivírus analisa a app). Os
+   seguintes são rápidos.
+
+
+════════════════════════════════════════════════════════════════════
+  DÚVIDAS FREQUENTES
+════════════════════════════════════════════════════════════════════
+
+• "O primeiro mapa / meteograma demora"
+   → É normal: os dados dos modelos são descarregados na primeira vez
+     e ficam guardados. Um meteograma do GFS pode levar ~1 minuto
+     (o servidor da NOAA limita o número de pedidos); depois é imediato.
+     Na primeira utilização do separador "Calor/Frio" é descarregada
+     uma única vez a climatologia de referência (~550 MB, ~1 minuto).
+
+• "Onde ficam os dados descarregados?"
+   → Mac:     ~/Library/Application Support/ForecastWorkstation
+     Windows: %LOCALAPPDATA%\ForecastWorkstation
+     A app limpa sozinha as runs antigas. Podes apagar a pasta à
+     vontade — será recriada.
+
+• "Não carrega nada / gráficos vazios"
+   → Verifica a ligação à Internet.
+
+• "O radar mostra 'API KEY REQUIRED'"
+   → O serviço de radar (RainViewer) limita os pedidos por minuto.
+     Espera um minuto e volta a tentar, sem fazer zoom muito depressa.
+
+• "É seguro?"
+   → Sim. Os avisos do Mac/Windows aparecem apenas porque a app não
+     tem uma assinatura digital paga — não significa que seja perigosa.
+
+Fontes de dados: NOAA/NCEP (GFS), ECMWF Open Data (CC BY 4.0),
+EUMETSAT (satélite), RainViewer (radar), NOAA CPC (climatologia).

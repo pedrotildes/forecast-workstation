@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]
+httpx
+numpy
+scipy
+matplotlib>=3.8
+metpy>=1.6
+cartopy>=0.23
+eccodes>=2.37
+h5py

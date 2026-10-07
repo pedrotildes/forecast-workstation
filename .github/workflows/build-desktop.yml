@@ -1,0 +1,78 @@
+name: Build desktop app
+
+# Builds the macOS and Windows desktop bundles, smoke-tests that each one actually
+# starts and serves the API, and publishes them as assets on a GitHub Release.
+# Triggered by pushing a version tag (e.g. v1.0.1) or manually.
+#
+# Release assets are used instead of actions/upload-artifact on purpose: they live
+# in separate storage that does NOT count against the Actions artifact quota.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # required to create the Release and upload assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pywebview pyinstaller
+
+      - name: Build bundle
+        run: |
+          cd backend
+          python -m PyInstaller forecast.spec --noconfirm --clean
+
+      # A green build is not enough: start the frozen app headless and require
+      # /api/health to answer (catches missing modules / native libraries).
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          FORECAST_HEADLESS=1 "backend/dist/Forecast Workstation.app/Contents/MacOS/ForecastWorkstation" &
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8766/api/health && exit 0; sleep 2; done
+          echo "app did not start"; exit 1
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          FORECAST_HEADLESS=1 backend/dist/ForecastWorkstation/ForecastWorkstation.exe &
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8766/api/health && exit 0; sleep 2; done
+          echo "app did not start"; exit 1
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: cd backend/dist && zip -ry "$GITHUB_WORKSPACE/Forecast-Workstation-macOS-AppleSilicon.zip" "Forecast Workstation.app"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path backend/dist/ForecastWorkstation -DestinationPath Forecast-Workstation-Windows.zip
+
+      # Both matrix jobs target the same tag; the action upserts the release and
+      # appends this OS's asset.
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Forecast Workstation ${{ github.ref_name }}
+          files: Forecast-Workstation-*.zip
+          fail_on_unmatched_files: true

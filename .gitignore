@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Downloaded model data, climatology and rendered images
+cache/
+
+# PyInstaller
+backend/build/
+backend/dist/
+
+# Editor / OS / local tooling
+.DS_Store
+.claude/
+*.bak*

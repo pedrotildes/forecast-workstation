@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forecast Workstation</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">◭</span> Forecast <b>Workstation</b></div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="maps">Mapas</button>
+    <button class="tab" data-tab="sounding">Sondagens</button>
+    <button class="tab" data-tab="meteogram">Meteogramas</button>
+    <button class="tab" data-tab="compare">Comparar</button>
+    <button class="tab" data-tab="extremes">Calor/Frio</button>
+    <button class="tab" data-tab="live">Satélite/Radar</button>
+  </nav>
+  <div class="model-bar" id="model-bar">
+    <div class="seg" id="models"></div>
+    <label class="runsel">Run <select id="run"></select></label>
+  </div>
+  <div class="status" id="status"></div>
+</header>
+
+<main class="layout">
+  <!-- ======================= sidebar: maps -->
+  <aside class="sidebar" id="side-maps">
+    <section>
+      <h3>Domínio</h3>
+      <select id="region" class="region-select"></select>
+    </section>
+    <section>
+      <h3>Produtos</h3>
+      <div id="presets" class="preset-list"></div>
+    </section>
+    <section class="builder">
+      <h3>Composição personalizada</h3>
+      <div class="layer" data-kind="fill">
+        <div class="layer-title"><span class="dot fill"></span>Sombreado</div>
+        <select class="var"></select>
+        <div class="row"><select class="level"></select><select class="accum"></select></div>
+      </div>
+      <div class="layer" data-kind="fill2">
+        <div class="layer-title"><span class="dot fill2"></span>Sombreado sobreposto <small>(precip., nuvens, CAPE…)</small></div>
+        <select class="var"></select>
+        <div class="row"><select class="level"></select><select class="accum"></select></div>
+      </div>
+      <div class="layer" data-kind="contour">
+        <div class="layer-title"><span class="dot contour"></span>Isolinhas</div>
+        <select class="var"></select>
+        <div class="row"><select class="level"></select><input class="interval" type="number" step="any" placeholder="intervalo"></div>
+      </div>
+      <div class="layer" data-kind="contour2">
+        <div class="layer-title"><span class="dot contour2"></span>Isolinhas (2.º campo)</div>
+        <select class="var"></select>
+        <div class="row"><select class="level"></select><input class="interval" type="number" step="any" placeholder="intervalo"></div>
+      </div>
+      <div class="layer" data-kind="wind">
+        <div class="layer-title"><span class="dot wind"></span>Vento (u, v)</div>
+        <div class="row"><select class="wlevel"></select><select class="wstyle">
+          <option value="">— nenhum —</option>
+          <option value="barbs">Barbelas</option>
+          <option value="arrows">Setas</option>
+          <option value="streamlines">Linhas de corrente</option>
+        </select></div>
+      </div>
+      <button id="apply" class="primary">Desenhar composição</button>
+    </section>
+    <section class="hint">
+      Clique no mapa para abrir a <b>sondagem prevista</b> nesse ponto.
+      Teclas: ← → passo, espaço anima.
+    </section>
+  </aside>
+
+  <!-- ======================= sidebar: soundings -->
+  <aside class="sidebar hidden" id="side-sounding">
+    <section>
+      <h3>Local</h3>
+      <div class="place-box"></div>
+      <h3>Parcela</h3>
+      <div class="seg small" id="parcel">
+        <button data-p="SB">SB</button><button data-p="ML" class="on">ML</button><button data-p="MU">MU</button>
+      </div>
+      <button id="snd-go" class="primary go">Gerar sondagem</button>
+    </section>
+    <section id="snd-summary" class="summary"></section>
+  </aside>
+
+  <!-- ======================= sidebar: meteograms -->
+  <aside class="sidebar hidden" id="side-meteogram">
+    <section>
+      <h3>Local</h3>
+      <div class="place-box"></div>
+      <h3>Alcance</h3>
+      <select id="mg-hours" class="hours-select">
+        <option value="72">3 dias</option><option value="120">5 dias</option>
+        <option value="240" selected>10 dias</option><option value="384">16 dias (máximo)</option>
+      </select>
+      <label class="check"><input type="checkbox" id="mg-profile" checked> Secção tempo-altura (HR, T, vento)</label>
+      <button id="mg-go" class="primary go">Gerar meteograma</button>
+    </section>
+    <section class="hint" id="mg-hint">
+      O meteograma usa todos os passos da run. Na primeira vez, o GFS demora ~1 min
+      (limite de pedidos do NOMADS) e o ECMWF ~20–40 s; depois fica em cache e
+      sondagens próximas do mesmo local são instantâneas.<br><br>
+      A secção tempo-altura está disponível no GFS (no ECMWF exigiria descarregar
+      ficheiros globais de todos os níveis em cada passo).
+    </section>
+  </aside>
+
+  <!-- ======================= sidebar: compare -->
+  <aside class="sidebar hidden" id="side-compare">
+    <section>
+      <h3>Modo</h3>
+      <div class="seg small wrap" id="cmp-mode">
+        <button data-m="maps" class="on">Mapas</button>
+        <button data-m="diff">Diferença</button>
+        <button data-m="sounding">Sondagem</button>
+        <button data-m="meteogram">Meteograma</button>
+      </div>
+      <h3>Modelos</h3>
+      <div id="cmp-models" class="checks"></div>
+    </section>
+    <section class="cmp-only" data-modes="maps">
+      <h3>Produto</h3>
+      <select id="cmp-preset"></select>
+      <h3>Domínio</h3>
+      <select id="cmp-region" class="region-select"></select>
+      <p class="hint">Clique num dos mapas para comparar as sondagens nesse ponto.</p>
+    </section>
+    <section class="cmp-only" data-modes="diff">
+      <h3>Modelos A − B</h3>
+      <div class="row"><select id="diff-a"></select><select id="diff-b"></select></div>
+      <h3>Variável</h3>
+      <select id="diff-var"></select>
+      <div class="row"><select id="diff-level"></select><select id="diff-accum"></select></div>
+      <h3>Domínio</h3>
+      <select id="diff-region" class="region-select"></select>
+      <button id="diff-go" class="primary">Calcular diferença</button>
+    </section>
+    <section class="cmp-only" data-modes="sounding meteogram">
+      <h3>Local</h3>
+      <div class="place-box"></div>
+      <div class="cmp-only" data-modes="meteogram">
+        <h3>Alcance</h3>
+        <select id="cmg-hours" class="hours-select">
+          <option value="120">5 dias</option><option value="240" selected>10 dias</option>
+          <option value="360">15 dias</option>
+        </select>
+      </div>
+      <button class="primary go">Comparar</button>
+    </section>
+  </aside>
+
+  <!-- ======================= sidebar: heat / cold waves -->
+  <aside class="sidebar hidden" id="side-extremes">
+    <section>
+      <h3>Produto</h3>
+      <div class="preset-list" id="x-products">
+        <button data-p="point" class="on">Termograma num local (todos os modelos + ENS)</button>
+        <button data-p="heat">Vaga de calor — persistência (modelo)</button>
+        <button data-p="cold">Vaga de frio — persistência (modelo)</button>
+        <button data-p="tmax_anom">Anomalia média da Tmáx</button>
+        <button data-p="tmin_anom">Anomalia média da Tmín</button>
+        <button data-p="ens_warm">ECMWF ENS — sinal quente (T850)</button>
+        <button data-p="ens_cold">ECMWF ENS — sinal frio (T850)</button>
+      </div>
+    </section>
+    <section class="x-only" data-p="point">
+      <h3>Local</h3>
+      <div class="place-box"></div>
+      <button class="primary go">Gerar termograma</button>
+    </section>
+    <section class="x-only" data-p="heat cold tmax_anom tmin_anom ens_warm ens_cold">
+      <h3>Domínio</h3>
+      <select id="x-region" class="region-select"></select>
+      <h3>Período</h3>
+      <select id="x-days">
+        <option value="1-16" selected>Toda a previsão</option>
+        <option value="1-5">Dias 1–5</option><option value="6-10">Dias 6–10</option>
+        <option value="11-16">Dias 11–16</option><option value="1-7">Próxima semana</option>
+        <option value="8-15">Semana seguinte</option>
+      </select>
+      <div class="x-only" data-p="ens_warm ens_cold">
+        <h3>Limiar (anomalia padronizada)</h3>
+        <div class="seg small" id="x-sigma">
+          <button data-s="1">1σ</button><button data-s="1p5" class="on">1,5σ</button><button data-s="2">2σ</button>
+        </div>
+        <h3>Vista</h3>
+        <div class="seg small" id="x-view">
+          <button data-v="sum" class="on">Persistência</button><button data-v="step">Por passo (12 h)</button>
+        </div>
+      </div>
+      <p class="hint">Clique no mapa para ver o termograma desse ponto.</p>
+    </section>
+    <section class="hint">
+      <b>Critério (IPMA/OMM):</b> onda de calor quando, durante ≥ 6 dias consecutivos,
+      a Tmáx ≥ normal + 5 °C; onda de frio quando a Tmín ≤ normal − 5 °C.
+      Normais diárias: NOAA CPC 1991–2020 (só sobre terra).<br><br>
+      <b>ECMWF ENS:</b> % dos 51 membros com anomalia padronizada de T850 acima/abaixo
+      de ±σ face ao clima do modelo — sinal antecipado de massas de ar anómalas.<br><br>
+      Os mapas de persistência usam o modelo escolhido na barra superior.
+    </section>
+  </aside>
+
+  <!-- ======================= sidebar: satellite / radar -->
+  <aside class="sidebar hidden" id="side-live">
+    <section>
+      <h3>Satélite (Meteosat)</h3>
+      <select id="live-sat"></select>
+      <p class="hint" id="live-latest"></p>
+      <h3>Sobreposições</h3>
+      <div id="live-ovl"></div>
+      <h3>Opacidade do radar</h3>
+      <input type="range" id="live-opacity" min="20" max="100" value="80">
+      <h3>Animação</h3>
+      <select id="live-hours">
+        <option value="1">Última hora</option><option value="3" selected>Últimas 3 horas</option>
+        <option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option>
+      </select>
+      <button id="live-refresh" class="primary">Atualizar imagens</button>
+      <p class="hint"><span id="live-radar-time"></span> <span id="live-preload"></span></p>
+    </section>
+    <section>
+      <h3>Vista</h3>
+      <div class="seg small wrap" id="live-views">
+        <button data-v="portugal">Portugal</button><button data-v="iberia">Ibéria</button>
+        <button data-v="europe">Europa</button><button data-v="natl">Atlântico</button>
+        <button data-v="azores">Açores</button><button data-v="madeira">Madeira</button>
+      </div>
+    </section>
+    <section class="hint">
+      Satélite: EUMETSAT (MTG-I1 a cada 10 min, MSG a cada 15 min), via EUMETView.
+      Radar: mosaico RainViewer (10 min, últimas ~2 h).<br><br>
+      Clique no mapa para abrir a sondagem, o meteograma ou o termograma desse ponto.
+    </section>
+  </aside>
+
+  <!-- ======================= viewer -->
+  <section class="viewer">
+    <div id="livemap" class="hidden"></div>
+    <div class="canvas" id="canvas">
+      <img id="img" alt="">
+      <div id="grid" class="grid hidden"></div>
+      <div class="crosshair hidden" id="crosshair"></div>
+      <div class="loader hidden" id="loader"><div class="spin"></div><span id="loadmsg">A carregar…</span>
+        <div class="bar hidden" id="pbar"><div id="pfill"></div></div></div>
+      <div class="error hidden" id="error"></div>
+    </div>
+    <footer class="timeline" id="timeline">
+      <button id="prev" title="Passo anterior">◀</button>
+      <button id="play" title="Animar">▶</button>
+      <button id="next" title="Passo seguinte">▶▏</button>
+      <div class="slider-wrap">
+        <input type="range" id="slider" min="0" max="0" value="0">
+        <div class="ticks" id="ticks"></div>
+      </div>
+      <div class="timeinfo"><b id="tstep">+0 h</b><span id="tvalid"></span></div>
+      <select id="speed" title="Velocidade da animação">
+        <option value="1200">lento</option><option value="700" selected>normal</option><option value="350">rápido</option>
+      </select>
+    </footer>
+  </section>
+</main>
+
+<template id="place-tpl">
+  <select class="place"></select>
+  <div class="row coords">
+    <label>Lat <input class="lat" type="number" step="0.01"></label>
+    <label>Lon <input class="lon" type="number" step="0.01"></label>
+  </div>
+</template>
+<script src="/static/app.js" type="module"></script>
+</body>
+</html>
