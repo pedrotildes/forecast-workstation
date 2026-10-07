@@ -8,7 +8,8 @@
 O QUE É
 -------
 Estação técnica de previsão do tempo com os modelos GFS (NOAA),
-ECMWF IFS e ECMWF AIFS, a partir dos dados originais (GRIB2):
+ECMWF IFS, ECMWF AIFS e ICON-EU (DWD, ~7 km), a partir dos dados
+originais (GRIB2):
 
   • Mapas de previsão com camadas combináveis (sombreado, isolinhas,
     vento) e 19 produtos prontos — pressão, precipitação, 500/850/
@@ -23,6 +24,14 @@ ECMWF IFS e ECMWF AIFS, a partir dos dados originais (GRIB2):
 
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
+
+VERSÃO 1.1.0 (07/10/2026)
+  • Novo modelo ICON-EU do serviço meteorológico alemão (DWD): resolução
+    de ~7 km sobre a Europa, até 5 dias. Cobre Portugal continental e a
+    Madeira (não cobre os Açores nem as Canárias).
+  • O termograma de calor/frio e o meteograma comparativo usam agora a
+    run completa mais recente de cada modelo.
+  Se já tinhas a versão 1.0.0, substitui-a por esta.
 
 VERSÃO 1.0.0 (07/10/2026) — primeira versão.
 
@@ -123,5 +132,5 @@ Requisitos: Windows 10 ou 11 (64 bits).
    → Sim. Os avisos do Mac/Windows aparecem apenas porque a app não
      tem uma assinatura digital paga — não significa que seja perigosa.
 
-Fontes de dados: NOAA/NCEP (GFS), ECMWF Open Data (CC BY 4.0),
+Fontes de dados: NOAA/NCEP (GFS), ECMWF Open Data (CC BY 4.0), DWD (ICON-EU),
 EUMETSAT (satélite), RainViewer (radar), NOAA CPC (climatologia).

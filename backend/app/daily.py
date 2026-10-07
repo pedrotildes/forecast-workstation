@@ -25,7 +25,7 @@ def window_hours(model: Model, step: int) -> int | None:
     """Length of the max/min window ending at ``step`` (0 = instantaneous sample)."""
     if not model.has("tmax"):
         return 0
-    if model.id == "gfs":
+    if model.id in ("gfs", "icon_eu"):     # 6-h max/min windows
         return 6 if step % 6 == 0 and step >= 6 else None
     if model.global_download:  # ECMWF IFS
         if step == 0:

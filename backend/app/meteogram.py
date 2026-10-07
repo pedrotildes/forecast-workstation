@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore")
 
 WEEK = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 MON = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-MODEL_COLORS = {"gfs": "#2563eb", "ecmwf": "#dc2626", "aifs": "#16a34a"}
+MODEL_COLORS = {"gfs": "#2563eb", "ecmwf": "#dc2626", "aifs": "#16a34a", "icon_eu": "#9333ea"}
 KMH = 3.6
 
 
@@ -80,7 +80,7 @@ def render_meteogram(data: dict, place: str) -> bytes:
     tt = mdates.date2num(t)
     prof = data.get("profile")
     has_lmh = all(k in s and np.isfinite(s[k]).any() for k in ("lcc", "mcc", "hcc"))
-    cape_key = "mucape" if "mucape" in s else ("cape" if "cape" in s else None)
+    cape_key = next((k for k in ("mucape", "cape", "mlcape") if k in s and np.isfinite(s[k]).any()), None)
 
     panels = []
     if prof is not None:
@@ -216,7 +216,7 @@ def render_meteogram(data: dict, place: str) -> bytes:
                color=np.where(c > 1000, "#dc2626", np.where(c > 250, "#f59e0b", "#a3a3a3")), zorder=4)
         ax.set_ylim(0, max(300, c.max() * 1.2))
         ax.set_ylabel("J/kg", fontsize=8)
-        _panel_label(ax, "MUCAPE" if cape_key == "mucape" else "CAPE (superfície)")
+        _panel_label(ax, {"mucape": "MUCAPE", "cape": "CAPE (superfície)", "mlcape": "MLCAPE (90 hPa)"}[cape_key])
 
     _time_axis(ax_list, t[0], t[-1], ax_list[0])
     ax_list[-1].set_xlabel("Hora (UTC)", fontsize=8)

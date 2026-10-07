@@ -20,6 +20,13 @@ e instala `requirements.txt`.
 | GFS | NOMADS `grib_filter` (recorte por região/variável/nível) | 0.25°, 23 níveis de pressão | 00/06/12/18Z, +384 h (horário até +120 h) |
 | ECMWF IFS | ECMWF Open Data (pedidos HTTP por intervalo de bytes via `.index`), espelho AWS | 0.25°, 13 níveis | 00/12Z +360 h; 06/18Z +90 h |
 | ECMWF AIFS | idem (`aifs-single`) | 0.25°, 13 níveis | 4 runs/dia, +360 h, passo 6 h |
+| ICON-EU (DWD) | opendata.dwd.de (um ficheiro `.grib2.bz2` por campo/nível/passo) | 0.0625° (~7 km), 18 níveis | 00/06/12/18Z +120 h (horário até +78 h); 03/09/15/21Z +48 h |
+
+O ICON-EU é **regional** (23,5° W–62,5° E, 29,5° N–70,5° N): cobre Portugal continental e a
+Madeira, mas não os Açores nem as Canárias — a app avisa quando um ponto ou região fica fora.
+O servidor do DWD guarda só as últimas ~24 h. Produtos de longo alcance (termograma,
+persistência de calor/frio, meteograma comparativo) usam a run mais recente **completa**
+de cada modelo, para que uma run ainda em publicação não os encurte.
 
 Cada mensagem GRIB é guardada individualmente em `cache/grib/…` e
 descodificada com ecCodes. As imagens geradas ficam em `cache/img/`. A cache é

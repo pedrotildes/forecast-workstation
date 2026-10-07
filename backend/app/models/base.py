@@ -118,6 +118,8 @@ class Model:
     levels: list[int] = []            # pressure levels available (hPa)
     native: set[str] = set()          # canonical names this model provides
     global_download = False           # True -> files are global, cropped locally
+    coverage: tuple | None = None     # (lon0, lon1, lat0, lat1) for limited-area models
+    source: str = ""                  # data attribution shown on charts
 
     # ---- to implement -------------------------------------------------
     async def list_runs(self) -> list[dt.datetime]:
@@ -134,6 +136,39 @@ class Model:
         return f
 
     # ---- shared -------------------------------------------------------
+    def last_nominal_step(self, run: dt.datetime) -> int:
+        """Final forecast step of a complete run (used to detect runs still in production)."""
+        return 0
+
+    async def best_run(self) -> dt.datetime:
+        """Newest run already published up to its final step; falls back to the newest run.
+        Long-range products (thermogram, persistence maps, multi-model meteograms) use this
+        so a run still being published does not silently truncate them."""
+        runs = await self.list_runs()
+        for r in runs[:3]:
+            steps = await self.list_steps(r)
+            if steps and steps[-1] >= self.last_nominal_step(r):
+                return r
+        return runs[0]
+
+    def covers(self, lat: float, lon: float) -> bool:
+        """Whether the model domain contains the point (global models: always)."""
+        if not self.coverage:
+            return True
+        lo0, lo1, la0, la1 = self.coverage
+        return lo0 <= lon <= lo1 and la0 <= lat <= la1
+
+    def covers_box(self, lon0, lon1, lat0, lat1) -> bool:
+        if not self.coverage:
+            return True
+        lo0, lo1, la0, la1 = self.coverage
+        return lon0 < lo1 and lon1 > lo0 and lat0 < la1 and lat1 > la0
+
+    def outside_msg(self) -> str:
+        lo0, lo1, la0, la1 = self.coverage
+        return (f"{self.name} é um modelo regional e não cobre este local/região "
+                f"(domínio {abs(lo0):g}°W–{lo1:g}°E, {la0:g}°N–{la1:g}°N)")
+
     def has(self, name: str, level: int = 0) -> bool:
         if name not in self.native:
             return False

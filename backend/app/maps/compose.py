@@ -98,7 +98,7 @@ def preset_layers(preset: str, model: Model) -> list[dict]:
     layers = [dict(x) for x in PRESETS[preset]["layers"]]
     for ly in layers:  # graceful fallbacks for models lacking a field
         if ly.get("var") == "mucape" and not model.has("mucape"):
-            ly["var"] = "cape" if model.has("cape") else "lapse"
+            ly["var"] = next((v for v in ("cape", "mlcape") if model.has(v)), "lapse")
     return layers
 
 
@@ -119,6 +119,8 @@ async def build_job(model: Model, run: dt.datetime, step: int, steps: list[int],
                     region_id: str, layers: list[dict]) -> dict:
     region = REGIONS[region_id]
     domain = region.download_domain
+    if not model.covers_box(*region.extent):
+        raise FieldUnavailable(model.outside_msg())
 
     plan = []          # (layer, ctx, var|None, needs)
     needs = []
@@ -168,8 +170,7 @@ async def build_job(model: Model, run: dt.datetime, step: int, steps: list[int],
             labels.append(label if ly["type"] == "fill" else label + " [isolinhas]")
 
     valid = run + dt.timedelta(hours=step)
-    src = ("© ECMWF Open Data (CC BY 4.0)" if model.id in ("ecmwf", "aifs")
-           else "NOAA/NCEP NOMADS")
+    src = model.source
     return {
         "region": region_id,
         "lats": grid.lats, "lons": grid.lons,

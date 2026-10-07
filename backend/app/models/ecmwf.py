@@ -37,6 +37,7 @@ _MAP = {
 
 class _ECMWFBase(Model):
     global_download = True
+    source = "© ECMWF Open Data (CC BY 4.0)"
     path_model = "ifs"
     resolution = "0.25°"
     levels = PL
@@ -54,6 +55,9 @@ class _ECMWFBase(Model):
 
     def nominal_steps(self, run: dt.datetime) -> list[int]:
         raise NotImplementedError
+
+    def last_nominal_step(self, run):
+        return self.nominal_steps(run)[-1]
 
     def _url(self, mirror: str, run: dt.datetime, step: int, ext: str) -> str:
         s = self.stream(run)

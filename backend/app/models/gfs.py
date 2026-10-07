@@ -85,6 +85,7 @@ class GFS(Model):
     description = "NCEP Global Forecast System — 0.25°, 4 runs/dia, até +384 h"
     levels = PL
     native = set(_UPPER) | set(_SINGLE)
+    source = "NOAA/NCEP NOMADS"
 
     def __init__(self):
         self._steps_cache = TTLCache(300)
@@ -103,6 +104,9 @@ class GFS(Model):
         steps = {int(m) for m in re.findall(
             rf'gfs\.t{hh}z\.pgrb2\.0p25\.f(\d{{3}})"', r.text)}
         return sorted(steps)
+
+    def last_nominal_step(self, run):
+        return 384
 
     async def list_runs(self) -> list[dt.datetime]:
         cached = self._runs_cache.get("runs")

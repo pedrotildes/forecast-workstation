@@ -12,6 +12,8 @@ KT = 1.943844
 
 
 async def get_profile(model: Model, run: dt.datetime, step: int, lat: float, lon: float) -> dict:
+    if not model.covers(lat, lon):
+        raise FieldUnavailable(model.outside_msg())
     lv = model.levels
     hum = "r" if model.has("r") else "q"
     upper = [(n, p) for p in lv for n in ("gh", "t", "u", "v", hum) + (("w",) if model.has("w") else ())]

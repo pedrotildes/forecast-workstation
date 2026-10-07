@@ -11,7 +11,7 @@ from .models import Domain, FieldUnavailable, Model
 from .models.base import TTLCache
 
 SURFACE = ["t2m", "d2m", "u10", "v10", "gust", "msl", "sp", "tp", "tcc", "lcc", "mcc", "hcc",
-           "cape", "mucape", "orog"]
+           "cape", "mucape", "mlcape", "orog"]
 UPPER_COMMON = [("t", 850), ("gh", 500)]
 TH_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400,
              350, 300, 250, 200]
@@ -30,6 +30,8 @@ def series_steps(model: Model, steps: list[int], hours: int) -> list[int]:
             ok = s % 3 == 0 if s <= 240 else s % 6 == 0
         elif model.id == "ecmwf":
             ok = s % 3 == 0 if s <= 72 else s % 6 == 0
+        elif model.id == "icon_eu":
+            ok = s % 3 == 0
         else:
             ok = True
         if ok:
@@ -59,6 +61,8 @@ async def point_series(model: Model, run: dt.datetime, lat: float, lon: float, h
     cached = _SERIES.get(ck)
     if cached is not None:
         return cached
+    if not model.covers(lat, lon):
+        raise FieldUnavailable(model.outside_msg())
     steps = series_steps(model, await model.list_steps(run), hours)
     if not steps:
         raise FieldUnavailable(f"{model.name}: sem passos disponíveis para {run:%Y%m%d%H}")
@@ -79,8 +83,9 @@ async def point_series(model: Model, run: dt.datetime, lat: float, lon: float, h
 
     async def one(st):
         async with sem:
+            ks = keys if st == steps[0] else [k for k in keys if k[0] != "orog"]
             try:
-                f = await model.fetch(run, st, keys, dom)
+                f = await model.fetch(run, st, ks, dom)
                 vals[st] = {k: fld.at(lat, lon) for k, fld in f.items()}
             except FieldUnavailable:
                 vals[st] = {}
@@ -97,8 +102,10 @@ async def point_series(model: Model, run: dt.datetime, lat: float, lon: float, h
         "s": {k[0] if k[1] == 0 else f"{k[0]}{k[1]}": arr(k) for k in keys if not
               (profile and k[1] and k not in UPPER_COMMON)},
     }
-    if model.has("orog"):
-        out["orog"] = float(np.nanmedian(arr(("orog", 0)))) if ("orog", 0) in keys else None
+    if model.has("orog") and ("orog", 0) in keys:
+        o = vals[steps[0]].get(("orog", 0))
+        out["orog"] = float(o) if o is not None and np.isfinite(o) else None
+        out["s"].pop("orog", None)
     if profile:
         out["levels"] = lv
         prof = {n: np.array([[vals[s].get((n, p), np.nan) for s in steps] for p in lv])

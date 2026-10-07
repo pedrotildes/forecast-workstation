@@ -252,7 +252,17 @@ def render_job(job: dict) -> tuple[bytes, list[float]]:
     ax.set_extent(extent, crs=crs)
     _features(ax, region)
 
-    up = region.upsample
+    # Fine grids on large domains: keep ~2 grid points per output pixel column at most.
+    res = abs(float(lats[1] - lats[0])) if len(lats) > 1 else 0.25
+    stride = max(1, int(np.ceil(max(len(lons) / 750, len(lats) / 560))))
+    if stride > 1:
+        lats, lons = lats[::stride], lons[::stride]
+        for ly in job["layers"]:
+            for k in ("data", "u", "v"):
+                if k in ly and ly[k] is not None:
+                    ly[k] = ly[k][::stride, ::stride]
+        res *= stride
+    up = max(1, int(round(region.upsample * min(1.0, res / 0.25))))
     cbar_specs = []
     for ly in job["layers"]:
         t = ly["type"]

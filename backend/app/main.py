@@ -25,7 +25,7 @@ from .workers import (compare_sounding_worker, render_map_worker, render_meteogr
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "7"
+RENDER_VERSION = "10"
 
 
 @app.on_event("startup")
@@ -267,7 +267,7 @@ async def compare_meteogram(models: str, lat: float, lon: float, hours: int = 24
                             name: str = "", job: str | None = None):
     _check_point(lat, lon)
     ms = _model_list(models)
-    runs_ = [(await m.list_runs())[0] for m in ms]
+    runs_ = [await m.best_run() for m in ms]
 
     async def produce():
         datas = []
@@ -416,7 +416,7 @@ async def extremes_map(kind: str, model: str, region: str = "iberia", d0: int = 
         raise HTTPException(404, "região desconhecida")
     await _climate_or_503()
     m = _model(model)
-    r = (await m.list_runs())[0]
+    r = await m.best_run()
     prog = PROGRESS.setdefault(job, {}) if job else None
     return await _map_png_cached(["xmap", kind, model, r, region, d0, d1],
                                  lambda: build_map_job(kind, m, r, region, d0, d1, prog))
@@ -444,14 +444,14 @@ async def extremes_ens(param: str = "p_gt1p5", region: str = "europe", step: int
 
 
 @app.get("/api/extremes/point.png")
-async def extremes_point(lat: float, lon: float, models: str = "gfs,ecmwf,aifs", name: str = "",
+async def extremes_point(lat: float, lon: float, models: str = "gfs,ecmwf,aifs,icon_eu", name: str = "",
                          job: str | None = None):
     from .heatwave import point_data
     from .models.ecmwf import ENS
     _check_point(lat, lon)
     await _climate_or_503()
     ms = _model_list(models)
-    runs_ = [(await m.list_runs())[0] for m in ms] + [(await ENS.list_runs())[0]]
+    runs_ = [await m.best_run() for m in ms] + [(await ENS.list_runs())[0]]
 
     async def produce():
         prog = PROGRESS.setdefault(job, {}) if job else None

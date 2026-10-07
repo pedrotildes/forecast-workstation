@@ -19,7 +19,7 @@ const PLACES = [
   ["Madrid", 40.42, -3.70], ["Barcelona", 41.39, 2.17], ["Sevilha", 37.39, -5.98],
   ["A Corunha", 43.36, -8.41], ["Valência", 39.47, -0.38], ["Bordéus", 44.84, -0.58],
 ];
-const MODEL_COLORS = { gfs: "#3b82f6", ecmwf: "#ef4444", aifs: "#22c55e" };
+const MODEL_COLORS = { gfs: "#3b82f6", ecmwf: "#ef4444", aifs: "#22c55e", icon_eu: "#a855f7" };
 
 const S = {
   tab: "maps", model: "gfs", models: [], runs: [], run: null, steps: [], idx: 0,

@@ -48,6 +48,9 @@ async def build_diff_job(a: tuple, b: tuple, var_id: str, level: int, region_id:
     if var.upper and not level:
         level = 500
     region = REGIONS[region_id]
+    for m in (ma, mb):
+        if not m.covers_box(*region.extent):
+            raise FieldUnavailable(m.outside_msg())
     dom = region.download_domain
     fa, ga, ctx_a = await _field(ma, ra, sa, var, level, accum, dom)
     fb, gb, _ = await _field(mb, rb, sb, var, level, accum, dom)
@@ -75,7 +78,7 @@ async def build_diff_job(a: tuple, b: tuple, var_id: str, level: int, region_id:
              "color": "#c1121f", "style": "dashed", "extrema": False},
         ]
     valid = ra + dt.timedelta(hours=sa)
-    srcs = {"NOAA/NCEP NOMADS" if m.id == "gfs" else "© ECMWF Open Data (CC BY 4.0)" for m in (ma, mb)}
+    srcs = {m.source for m in (ma, mb)}
     iso = (f"  ·  Isolinhas: {ma.name} (preto) e {mb.name} (vermelho tracejado)"
            if var.id in CONTOUR_VARS else "")
     return {

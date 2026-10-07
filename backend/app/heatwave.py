@@ -94,6 +94,8 @@ def _job(region_id, grid, layers, left1, left2, layers_txt, right1, right2, foot
 async def build_map_job(kind: str, model: Model, run, region_id: str, d0: int, d1: int,
                         progress=None) -> dict:
     region = REGIONS[region_id]
+    if not model.covers_box(*region.extent):
+        raise FieldUnavailable(model.outside_msg())
     a = await anomalies(model, run, region.download_domain, progress)
     days = a["days"]
     d0 = max(1, d0)
@@ -101,7 +103,7 @@ async def build_map_job(kind: str, model: Model, run, region_id: str, d0: int, d
     if d0 > d1:
         raise FieldUnavailable("intervalo de dias inválido")
     sel = days[d0 - 1:d1]
-    src = ("© ECMWF Open Data (CC BY 4.0)" if model.global_download else "NOAA/NCEP NOMADS")
+    src = model.source
     footer = f"Dados: {src} · Normais: NOAA CPC Global Unified Temperature 1991–2020 (só terra)"
     rng_txt = f"{fmt_day(sel[0])} a {fmt_day(sel[-1])} (dias {d0}–{d1} da previsão)"
     left1 = f"{model.name} {model.resolution}   ·   Run {fmt_time(run)}"
@@ -204,7 +206,9 @@ async def point_data(models: list[Model], lat: float, lon: float, job_prog: dict
     dom = Domain.tile(lat, lon)
     out = {"lat": lat, "lon": lon, "models": []}
     for i, m in enumerate(models):
-        run = (await m.list_runs())[0]
+        if not m.covers(lat, lon):
+            continue
+        run = await m.best_run()
         if job_prog is not None:
             job_prog.update(model_i=i, models=len(models) + 1)
         try:

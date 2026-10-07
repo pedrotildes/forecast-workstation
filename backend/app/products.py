@@ -365,7 +365,10 @@ async def gather(model: Model, run, step: int, steps: list[int], needs: list[Nee
 def evaluate(var: Var, data: Data) -> np.ndarray:
     arr = var.compute(data)
     if var.smooth:
+        lats = data.grid.lats
+        res = abs(float(lats[1] - lats[0])) if len(lats) > 1 else 0.25
+        sigma = var.smooth * max(1.0, 0.25 / res)   # smoothing scales are set for 0.25° grids
         nan = np.isnan(arr)
-        arr = gaussian_filter(np.where(nan, np.nanmean(arr), arr), var.smooth)
+        arr = gaussian_filter(np.where(nan, np.nanmean(arr), arr), sigma)
         arr[nan] = np.nan
     return arr

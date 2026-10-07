@@ -34,11 +34,13 @@ def render_thermogram(data: dict, place: str) -> bytes:
     ntx, ntn = np.array(data["ntmax"]), np.array(data["ntmin"])
     ens = data.get("ens")
     n_panels = 3 if ens else 2
-    fig_h = 2.6 * n_panels + 2.6
+    n_lines = len(data["models"]) + (1 if ens else 0)
+    head = 0.95 + 0.27 * n_lines
+    fig_h = 2.6 * n_panels + head + 0.4
     fig = Figure(figsize=(14.5, fig_h), dpi=110, facecolor="white")
     FigureCanvasAgg(fig)
     gs = fig.add_gridspec(n_panels, 1, hspace=0.12, left=0.06, right=0.97,
-                          top=1 - 2.2 / fig_h, bottom=0.45 / fig_h,
+                          top=1 - (head + 0.3) / fig_h, bottom=0.45 / fig_h,
                           height_ratios=[1.2, 1.2] + ([1.0] if ens else []))
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1], sharex=ax1)
