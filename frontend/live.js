@@ -320,9 +320,10 @@ export async function show() {
     for (const [name, z] of [["base", 200], ["sat", 350], ["radar", 420], ["top", 460], ["lines", 500]]) {
       m.createPane(name).style.zIndex = z;
     }
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      pane: "base", maxZoom: 12, subdomains: "abcd",
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/">CARTO</a> · Satélite © <a href="https://view.eumetsat.int" target="_blank">EUMETSAT</a>',
+    // CARTO basemaps now require an API key: Esri "Dark Gray Canvas" instead
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+      pane: "base", maxZoom: 12, maxNativeZoom: 16,
+      attribution: 'Fundo © Esri · Satélite © <a href="https://view.eumetsat.int" target="_blank">EUMETSAT</a>',
     }).addTo(m);
     m.fitBounds(VIEWS.iberia);
     L_.map = m;

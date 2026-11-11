@@ -1,5 +1,6 @@
 // Forecast Workstation — front-end (vanilla ES module, no build step)
 import * as live from "./live.js";
+import { KINDS as XS_KINDS, LineBox, lineThrough } from "./xsect.js";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const api = (path) => fetch(path).then(async (r) => {
@@ -32,7 +33,12 @@ const S = {
     model: "ecmwf", region: "nea", every: 12, systems: [], station: "08536", time: null, obs: null },
   x: { product: "point", region: "iberia", days: "1-16", sigma: "1p5", view: "sum",
     steps: [], run: null, idx: 0 },
+  // vertical cross-section line (shared by the Sondagens and Casos panels)
+  xs: { lat0: 32.65, lon0: -16.91, lat1: 38.72, lon1: -9.14, a: "Funchal", b: "Lisboa",
+    preset: "L:Madeira → Lisboa", kind: "dyn" },
+  sndMode: "point", clickMode: "sounding", xsPending: null,
 };
+const XS = { fc: null, cs: null };   // LineBox instances
 const frames = new Map();     // url -> {src, axes}
 let loadToken = 0;
 
@@ -57,6 +63,13 @@ function mapUrl(i = S.idx) {
 function soundingUrl(i = S.idx, kind = "png") {
   return `/api/sounding.${kind}?` + qs({ model: S.model, run: S.run, step: S.steps[i], lat: S.lat,
     lon: S.lon, parcel: S.parcel, name: S.place || "" });
+}
+function xsQuery() {
+  const l = S.xs;
+  return { lat0: l.lat0, lon0: l.lon0, lat1: l.lat1, lon1: l.lon1, kind: l.kind, a: l.a || "", b: l.b || "" };
+}
+function xsUrl(i = S.idx) {
+  return "/api/xsection.png?" + qs({ model: S.model, run: S.run, step: S.steps[i], ...xsQuery() });
 }
 function meteogramUrl() {
   return "/api/meteogram.png?" + qs({ model: S.model, run: S.run, lat: S.lat, lon: S.lon,
@@ -101,7 +114,9 @@ function caseUrl() {
     sounding: ["sounding.png", c.station ? { time: c.time || "", station: c.station, models: ms }
       : { time: c.time || "", lat: S.lat, lon: S.lon, name: S.place || "", models: ms }],
     meteogram: ["meteogram.png", { model: c.model, lat: S.lat, lon: S.lon, name: S.place || "" }],
+    xsection: ["xsection.png", { model: c.model, time: c.xtime || "", ...xsQuery() }],
   }[c.product];
+  if (c.product === "xsection" && !c.xtime) return [];
   if (c.product === "sounding" && !c.time) return [];
   return [`/api/cases/${c.eid}/${u[0]}?` + qs(u[1])];
 }
@@ -110,7 +125,7 @@ function urlsAt(i) {
   if (S.tab === "cases") return caseUrl();
   if (S.tab === "extremes") return xUrls(i);
   if (S.tab === "maps") return [mapUrl(i)];
-  if (S.tab === "sounding") return [soundingUrl(i)];
+  if (S.tab === "sounding") return [S.sndMode === "xsec" ? xsUrl(i) : soundingUrl(i)];
   if (S.tab === "meteogram") return [meteogramUrl()];
   return cmpUrls(i);
 }
@@ -170,7 +185,7 @@ async function show() {
   let stopWatch = () => {};
   if (!cached) {
     $("#loader").classList.remove("hidden");
-    $("#loadmsg").textContent = { maps: "A gerar mapa…", sounding: "A calcular sondagem…",
+    $("#loadmsg").textContent = { maps: "A gerar mapa…", sounding: S.sndMode === "xsec" ? "A calcular o corte vertical…" : "A calcular sondagem…",
       meteogram: "A preparar meteograma…", compare: "A comparar modelos…",
       extremes: "A calcular Tmáx/Tmín diárias…", cases: "A analisar o caso a partir do arquivo…" }[S.tab];
     if (job) stopWatch = watchProgress(job, token);
@@ -188,7 +203,7 @@ async function show() {
       (S.tab === "cases" && ["track", "precip", "gust"].includes(S.cs.product)) || (S.tab === "compare" && ["maps", "diff"].includes(S.cmp.mode)) ||
       (S.tab === "extremes" && S.x.product !== "point"));
     markCached();
-    if (S.tab === "sounding") loadSummary();
+    if (S.tab === "sounding" && S.sndMode === "point") loadSummary();
     $("#crosshair").classList.add("hidden");
   } catch (e) {
     if (token !== loadToken) return;
@@ -466,7 +481,34 @@ async function pickPoint(e, axes, region) {
   return true;
 }
 
+async function locateClick(e, axes, region) {
+  if (!axes) return null;
+  const f = clickToFrac(e, axes);
+  if (!f) return null;
+  return api(`/api/locate?region=${region}&fx=${f[0]}&fy=${f[1]}`);
+}
+async function xsMapClick(e) {
+  const loc = await locateClick(e, S.axes, S.region);
+  if (!loc) return;
+  const cv = $("#canvas").getBoundingClientRect(), ch = $("#crosshair");
+  if (!S.xsPending) {
+    S.xsPending = loc;
+    ch.style.left = (e.clientX - cv.left + $("#canvas").scrollLeft) + "px";
+    ch.style.top = (e.clientY - cv.top + $("#canvas").scrollTop) + "px";
+    ch.classList.remove("hidden");
+    status(`Ponto A: ${loc.lat.toFixed(2)}, ${loc.lon.toFixed(2)} — clique agora no ponto B`, "ok");
+    return;
+  }
+  Object.assign(S.xs, { lat0: S.xsPending.lat, lon0: S.xsPending.lon, lat1: loc.lat, lon1: loc.lon,
+    a: "", b: "", preset: "" });
+  S.xsPending = null;
+  ch.classList.add("hidden");
+  S.sndMode = "xsec";
+  await setTab("sounding");
+}
+
 $("#img").addEventListener("click", async (e) => {
+  if (S.tab === "maps" && S.clickMode === "xsec") { await xsMapClick(e); return; }
   if (S.tab === "cases" && ["track", "precip", "gust"].includes(S.cs.product)) {
     if (await pickPoint(e, S.axes, S.cs.region)) setCaseProduct("point");
     return;
@@ -594,6 +636,7 @@ async function setTab(tab) {
     return;
   }
   if (tab === "extremes") { setXProduct(S.x.product); return; }
+  if (tab === "sounding") applySndMode();
   status(`${S.steps.length} passos · até +${S.steps[S.steps.length - 1]} h`, "ok");
   buildTicks();
   show();
@@ -751,7 +794,105 @@ function setCaseProduct(p) {
   if (p === "systems") { loadSystems(); $("#img").classList.add("hidden"); return; }
   $("#img").classList.remove("hidden");
   if (p === "sounding") { loadCaseObs().then(show); return; }
+  if (p === "xsection") { loadCaseXs().then(show); return; }
   show();
+}
+
+// ------------------------------------------------------------------ vertical cross-sections
+function xsKinds(box) {
+  box.innerHTML = XS_KINDS.map(([id, name]) => `<button data-k="${id}" class="${id === S.xs.kind ? "on" : ""}">${name}</button>`).join("");
+  box.querySelectorAll("button").forEach((b) => b.onclick = () => {
+    S.xs.kind = b.dataset.k;
+    $$(".xs-kinds button").forEach((x) => x.classList.toggle("on", x.dataset.k === S.xs.kind));
+    show();
+  });
+}
+function applySndMode() {
+  $$("#snd-mode button").forEach((b) => b.classList.toggle("on", b.dataset.m === S.sndMode));
+  $$("#side-sounding .snd-point").forEach((el) => el.classList.toggle("hidden", S.sndMode !== "point"));
+  $$("#side-sounding .snd-xsec").forEach((el) => el.classList.toggle("hidden", S.sndMode !== "xsec"));
+  if (S.sndMode === "xsec") XS.fc.refresh();
+}
+function caseCentre(name, t) {
+  // analysed centre of system `name` nearest to time t (within 3 h), from the case tracks
+  const per = (S.cs.tracks || {})[name] || {};
+  const tr = per[S.cs.model] || per.ecmwf || Object.values(per).find((x) => x && x.length) || [];
+  const tt = new Date(t + "Z").getTime();
+  let best = null, bd = Infinity;
+  tr.forEach((p) => { const d = Math.abs(new Date(p.time + "Z").getTime() - tt); if (d < bd) { bd = d; best = p; } });
+  return best && bd <= 3 * 3600e3 ? best : null;
+}
+function caseXsPresets() {
+  if (S.tab !== "cases" || !S.cs.tracks) return [];
+  const out = [];
+  const ori = [["we", "O → E"], ["sn", "S → N"], ["swne", "SO → NE"], ["nwse", "NO → SE"]];
+  for (const name of Object.keys(S.cs.tracks)) {
+    for (const [o, lab] of ori) {
+      out.push({ id: `C:${name}:${o}`, label: `Pelo centro de ${name} (${lab}, 1600 km)`, line: () => {
+        const c = S.cs.xtime && caseCentre(name, S.cs.xtime);
+        if (!c) return null;
+        return { ...lineThrough(c.lat, c.lon, o, 1600), a: "", b: "" };
+      } });
+    }
+  }
+  return out;
+}
+async function loadCaseXs() {
+  const c = S.cs;
+  if (!c.eid) return;
+  status("A preparar o corte (tempos e trajetórias do caso)…");
+  const [times, tracks] = await Promise.all([
+    api(`/api/cases/${c.eid}/xtimes?model=${c.model}`).catch(() => []),
+    c.tracksFor === c.eid + c.model ? Promise.resolve(c.tracks)
+      : api(`/api/cases/${c.eid}/tracks.json?models=${c.model === "ecmwf" ? "ecmwf" : "ecmwf," + c.model}`).catch(() => null),
+  ]);
+  c.tracks = tracks; c.tracksFor = c.eid + c.model;
+  c.xtimes = times;
+  $("#case-xtime").innerHTML = times.map((t) => `<option value="${t.time}">${fmt(new Date(t.time + "Z"))}${t.archived ? " ✓" : ""}</option>`).join("");
+  if (!c.xtime || !times.some((t) => t.time === c.xtime)) {
+    // default: deepest analysed point of the first system, else the middle of the event
+    const tr = tracks && Object.values(tracks)[0];
+    const pts = tr ? (tr[c.model] || tr.ecmwf || []) : [];
+    const deep = pts.length ? pts.reduce((a, b) => (b.p < a.p ? b : a)) : null;
+    let pick = times[Math.floor(times.length / 2)];
+    if (deep) {
+      const dt = new Date(deep.time + "Z").getTime();
+      pick = times.reduce((a, b) => (Math.abs(new Date(b.time + "Z") - dt) < Math.abs(new Date(a.time + "Z") - dt) ? b : a), pick);
+    }
+    c.xtime = pick ? pick.time : null;
+  }
+  $("#case-xtime").value = c.xtime || "";
+  if (!S.xs.preset || !S.xs.preset.startsWith("C:")) {
+    const first = caseXsPresets()[0];
+    if (first) XS.cs.applyPreset(first.id, false);
+  } else XS.cs.applyPreset(S.xs.preset, false);
+  XS.cs.refresh();
+  status("Corte vertical da análise arquivada", "ok");
+}
+function caseXtime(t) {
+  S.cs.xtime = t;
+  $("#case-xtime").value = t;
+  if (S.xs.preset && S.xs.preset.startsWith("C:")) XS.cs.applyPreset(S.xs.preset, false);
+  show();
+}
+function initXs() {
+  XS.fc = new LineBox($("#xs-line-fc"), S.xs, () => show());
+  XS.cs = new LineBox($("#xs-line-case"), S.xs, () => show(), caseXsPresets);
+  xsKinds($("#xs-kinds-fc")); xsKinds($("#xs-kinds-case"));
+  $$("#snd-mode button").forEach((b) => b.onclick = () => { S.sndMode = b.dataset.m; applySndMode(); show(); });
+  $$("#click-mode button").forEach((b) => b.onclick = () => {
+    S.clickMode = b.dataset.m; S.xsPending = null; $("#crosshair").classList.add("hidden");
+    $$("#click-mode button").forEach((x) => x.classList.toggle("on", x === b));
+    status(S.clickMode === "xsec" ? "Corte vertical: clique no ponto A e depois no ponto B" : "Clique no mapa para abrir a sondagem", "ok");
+  });
+  $("#case-xtime").onchange = (e) => caseXtime(e.target.value);
+  const stepT = (d) => {
+    const ts = (S.cs.xtimes || []).map((t) => t.time);
+    const i = ts.indexOf(S.cs.xtime) + d;
+    if (i >= 0 && i < ts.length) caseXtime(ts[i]);
+  };
+  $("#case-xprev").onclick = () => stepT(-1);
+  $("#case-xnext").onclick = () => stepT(1);
 }
 
 async function loadCaseObs() {
@@ -811,7 +952,11 @@ function initCases() {
   $("#case-event").onchange = (e) => { S.cs.eid = e.target.value; setCaseProduct(S.cs.product); };
   $$("#case-products button").forEach((b) => b.onclick = () => setCaseProduct(b.dataset.p));
   $("#case-fc").onchange = (e) => { S.cs.fc = e.target.value; show(); };
-  $("#case-model").onchange = (e) => { S.cs.model = e.target.value; show(); };
+  $("#case-model").onchange = async (e) => {
+    S.cs.model = e.target.value;
+    if (S.cs.product === "xsection") await loadCaseXs();
+    show();
+  };
   $("#case-region").value = S.cs.region;
   $("#case-region").onchange = (e) => { S.cs.region = e.target.value; show(); };
   $("#case-every").onchange = (e) => { S.cs.every = +e.target.value; show(); };
@@ -886,6 +1031,7 @@ async function init() {
   initExtremes();
   initEvents();
   initCases();
+  initXs();
   live.init({
     onPoint: (lat, lon, tab) => {
       S.lat = lat; S.lon = lon; S.place = ""; syncPlaces();

@@ -72,8 +72,13 @@
       </div>
       <button id="apply" class="primary">Desenhar composição</button>
     </section>
+    <section>
+      <h3>Clique no mapa abre</h3>
+      <div class="seg small" id="click-mode"><button data-m="sounding" class="on">Sondagem</button><button data-m="xsec">Corte vertical A→B</button></div>
+    </section>
     <section class="hint">
-      Clique no mapa para abrir a <b>sondagem prevista</b> nesse ponto.
+      Clique no mapa para abrir a <b>sondagem prevista</b> nesse ponto — ou, no modo <b>corte vertical</b>,
+      clique no ponto A e depois no ponto B.
       Teclas: ← → passo, espaço anima.
     </section>
   </aside>
@@ -81,6 +86,9 @@
   <!-- ======================= sidebar: soundings -->
   <aside class="sidebar hidden" id="side-sounding">
     <section>
+      <div class="seg" id="snd-mode"><button data-m="point" class="on">Sondagem num ponto</button><button data-m="xsec">Corte vertical A→B</button></div>
+    </section>
+    <section class="snd-point">
       <h3>Local</h3>
       <div class="place-box"></div>
       <h3>Parcela</h3>
@@ -89,7 +97,18 @@
       </div>
       <button id="snd-go" class="primary go">Gerar sondagem</button>
     </section>
-    <section id="snd-summary" class="summary"></section>
+    <section id="snd-summary" class="summary snd-point"></section>
+    <section class="snd-xsec hidden">
+      <h3>Linha do corte</h3>
+      <div class="line-box" id="xs-line-fc"></div>
+      <h3>Tipo de corte</h3>
+      <div class="preset-list xs-kinds" id="xs-kinds-fc"></div>
+    </section>
+    <section class="hint snd-xsec hidden">
+      Corte ao longo do círculo máximo de A para B, com todos os níveis de pressão do modelo
+      (GFS 21, ICON-EU 18, ECMWF 12 até 100 hPa). Vento normal positivo (⊗) = para dentro da
+      figura, isto é, para a esquerda de quem segue de A para B. A barra de tempo percorre os passos da run.
+    </section>
   </aside>
 
   <!-- ======================= sidebar: meteograms -->
@@ -296,6 +315,7 @@
         <button data-p="point">Evolução num local</button>
         <button data-p="sounding">Sondagens (radiossonda + modelos)</button>
         <button data-p="meteogram">Meteograma do caso</button>
+        <button data-p="xsection">Corte vertical (linha A→B)</button>
         <button data-p="systems">Sistemas a seguir…</button>
       </div>
     </section>
@@ -314,7 +334,7 @@
       <h3>Previsões a comparar</h3>
       <select id="case-fc"></select>
     </section>
-    <section class="case-only" data-p="sequence precip gust meteogram">
+    <section class="case-only" data-p="sequence precip gust meteogram xsection">
       <h3>Modelo</h3>
       <select id="case-model"></select>
     </section>
@@ -330,6 +350,17 @@
       <h3>Local</h3>
       <div class="place-box"></div>
       <button class="primary go">Ver evolução</button>
+    </section>
+    <section class="case-only" data-p="xsection">
+      <h3>Análise (UTC)</h3>
+      <div class="row xs-time"><button class="small-btn" id="case-xprev" title="Análise anterior">◀</button>
+        <select id="case-xtime"></select><button class="small-btn" id="case-xnext" title="Análise seguinte">▶</button></div>
+      <h3>Linha do corte</h3>
+      <div class="line-box" id="xs-line-case"></div>
+      <h3>Tipo de corte</h3>
+      <div class="preset-list xs-kinds" id="xs-kinds-case"></div>
+      <p class="hint">As linhas «pelo centro» acompanham o sistema: ao mudar de hora, o corte volta a passar
+      pelo centro analisado nessa hora. ✓ = análise com todos os níveis no arquivo.</p>
     </section>
     <section class="case-only" data-p="systems">
       <h3>Sistemas (sementes do seguimento)</h3>
@@ -379,6 +410,20 @@
     <label>Lat <input class="lat" type="number" step="0.01"></label>
     <label>Lon <input class="lon" type="number" step="0.01"></label>
   </div>
+</template>
+<template id="line-tpl">
+  <select class="line-preset"></select>
+  <div class="row coords"><b class="ab">A</b>
+    <label>Lat <input class="la0" type="number" step="0.01"></label>
+    <label>Lon <input class="lo0" type="number" step="0.01"></label></div>
+  <div class="row coords"><b class="ab">B</b>
+    <label>Lat <input class="la1" type="number" step="0.01"></label>
+    <label>Lon <input class="lo1" type="number" step="0.01"></label></div>
+  <div class="line-map"></div>
+  <p class="line-info"></p>
+  <div class="row"><button class="small-btn xs-swap" title="Trocar A e B">⇄ A↔B</button>
+    <button class="primary xs-go">Traçar corte</button></div>
+  <p class="hint">Clique no mapa pequeno para mudar A e B (alternadamente) ou arraste os marcadores.</p>
 </template>
 <script src="/static/app.js" type="module"></script>
 </body>

@@ -50,6 +50,7 @@ backend/app/
   maps/        styles.py (paletas e isolinhas), compose.py (presets → job),
                render.py (Cartopy/Matplotlib)
   sounding/    profile.py (perfil no ponto), analysis.py (MetPy), skewt.py, compare.py
+  xsection.py  cortes verticais ao longo de uma linha A→B (θ, θe, HR, ω, PV de Ertel)
   series.py    séries temporais num ponto (todos os passos de uma run)
   meteogram.py meteograma individual e multimodelo
   maps/diff.py mapas de diferenças entre modelos
@@ -58,7 +59,7 @@ backend/app/
   heatwave.py  critérios de vaga de calor/frio, mapas e sinal do ENS
   thermogram.py termograma de um ponto
   main.py      API FastAPI; renderização num pool de processos
-frontend/      index.html + app.js + style.css (sem build)
+frontend/      index.html + app.js + xsect.js + live.js + style.css (sem build)
 ```
 
 ## API
@@ -68,6 +69,8 @@ frontend/      index.html + app.js + style.css (sem build)
   `X-Map-Axes` dá a posição do mapa na imagem)
 - `GET /api/locate?region&fx&fy` → lat/lon
 - `GET /api/sounding.png|json?model&run&step&lat&lon&parcel=SB|ML|MU`
+- `GET /api/xsection.png?model&run&step&lat0&lon0&lat1&lon1&kind=dyn|normal|moist|omega|pv|temp[&a&b]`
+  — corte vertical previsto de A para B (`/api/xsection/kinds` lista os tipos)
 - `GET /api/meteogram.png?model&lat&lon[&run&hours=240&profile=true&name]` — meteograma
   (T/Td, precipitação, nebulosidade, vento/rajadas, MSLP, CAPE; secção tempo-altura no GFS)
 - `GET /api/compare/times?models=gfs,ecmwf,aifs` — horas válidas comuns (run/passo por modelo)
@@ -79,6 +82,28 @@ frontend/      index.html + app.js + style.css (sem build)
 - `GET /api/extremes/map.png?kind=heat|cold|tmax_anom|tmin_anom&model&region&d0&d1`
 - `GET /api/extremes/ens.png?param=p_gt1p5…&region[&step | &d0&d1]` — sinal ECMWF ENS
 - `GET /api/climate/status` — estado da climatologia CPC
+
+## Cortes verticais
+
+No separador **Sondagens → Corte vertical A→B** (ou em **Mapas**, com «Clique no mapa abre: Corte
+vertical», clicando em A e depois em B). A linha define-se por linhas predefinidas (Madeira→Lisboa,
+Açores→Lisboa, Lisboa→Madrid, paralelo 39°N…), por coordenadas, ou no mapa pequeno (clique ou
+arraste os marcadores). O corte segue o círculo máximo, usa todos os níveis de pressão do modelo
+até 100 hPa (GFS 21, ICON-EU 18, ECMWF/AIFS 12) e a barra de tempo percorre os passos da run.
+
+| Tipo | Sombreado | Linhas |
+|---|---|---|
+| Vento, θ e tropopausa | velocidade do vento (kt) + barbelas | θ, 2 PVU (tropopausa dinâmica) |
+| Vento normal ao corte | componente normal (⊗ para dentro = à esquerda de A→B) | θ, 2 PVU |
+| θe, humidade e subida | HR ≥ 50 % + barbelas | θe, ω < 0 |
+| Movimento vertical | ω (Pa/s; subida a vermelho) | θ, HR 90 % |
+| Vorticidade potencial | PV de Ertel isobárica (PVU) | θ, isotácas ≥ 60 kt, 2 PVU |
+| Temperatura | T (°C) + barbelas | 0 °C, HR 90 % |
+
+A PV é calculada na grelha (campos suavizados a ~25 km), com todos os termos da forma isobárica
+(vorticidade absoluta × ∂θ/∂p e termos baroclínicos); no ICON-EU o ω é suavizado a ~0,2°. Cada
+figura inclui um mapa de localização (pressão MSL + jato a 300 hPa ou θe a 850 hPa), a superfície
+(pressão à superfície) e a escala de altitude da atmosfera padrão.
 
 ## Satélite e radar (separador Satélite/Radar)
 
@@ -146,6 +171,9 @@ Separador **Casos**, sobre um evento arquivado:
   com hodógrafas e tabela de índices lado a lado (observado vs. modelos).
 - **Meteograma do caso** — secção tempo-altura das análises de 6 em 6 h (HR, T, vento), com as horas
   das radiossondas da estação mais próxima, e os painéis de superfície da cadeia de curto prazo.
+- **Corte vertical** — os mesmos cortes, sobre as análises arquivadas de 6 em 6 h, incluindo linhas
+  «pelo centro» de cada sistema (O→E, S→N, SO→NE, NO→SE; 1600 km) que acompanham o centro
+  analisado quando se muda de hora (◀ ▶).
 
 Radiossondas observadas (`app/obs.py`): Univ. Wyoming (BUFR de alta resolução) e, em alternativa,
 NOAA IGRA v2 (ficheiros *year-to-date*, 1–2 dias de atraso), para Lisboa, Funchal, Lajes, Corunha,

@@ -52,3 +52,8 @@ def render_case_worker(kind: str, data: dict):
     return {"pressure": cases_render.render_pressure, "sequence": cases_render.render_sequence,
             "point": cases_render.render_point,
             "meteogram": cases_render.render_case_meteogram}[kind](data)
+
+
+def render_xsection_worker(sec: dict, meta: dict):
+    from .xsection import render
+    return render(sec, meta)

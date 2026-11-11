@@ -175,3 +175,15 @@ textarea { background: var(--panel-2); border: 1px solid var(--line); border-rad
   background: var(--panel-2); cursor: pointer; color: #fecaca; }
 .small-btn { padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel-2);
   cursor: pointer; margin-top: 6px; }
+
+/* ---- vertical cross-sections */
+.line-map { height: 210px; border: 1px solid var(--line); border-radius: 6px; margin: 6px 0 4px;
+  background: #dfe7ee; }
+.line-map .leaflet-control-attribution { font-size: 9px; }
+.line-box .coords .ab { min-width: 14px; align-self: center; color: var(--accent); }
+.line-info { font-size: 12px; margin: 2px 0 6px; color: var(--muted, #9aa4b2); }
+.line-info.err { color: #f87171; }
+.xs-pin { background: #111827; color: #facc15; border: 2px solid #facc15; border-radius: 50%;
+  font: 700 12px/18px system-ui, sans-serif; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.xs-time select { flex: 1; }
+#snd-mode, #click-mode { flex-wrap: wrap; }

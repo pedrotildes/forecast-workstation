@@ -22,11 +22,20 @@ from .models.base import cleanup_cache
 from .series import PROGRESS, has_profile, point_series, resolve_run
 from .workers import (compare_sounding_worker, render_map_worker, render_meteogram_worker,
                       render_case_worker, render_multi_worker, render_sounding_worker,
-                      render_thermogram_worker)
+                      render_thermogram_worker, render_xsection_worker)
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "13"
+RENDER_VERSION = "14"
+
+
+@app.middleware("http")
+async def _no_stale_frontend(request, call_next):
+    # front-end files must be revalidated (ETag → 304) so an updated app never runs old JS
+    resp = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.on_event("startup")
@@ -217,6 +226,63 @@ async def sounding_json(model: str, run: str, step: int, lat: float, lon: float,
                         parcel: str = "ML"):
     _, data = await _sounding(model, run, step, lat, lon, parcel, "")
     return JSONResponse(_clean(data))
+
+
+# ---------------------------------------------------------------- vertical cross-sections
+def _xs_meta(kind, title, subtitle, source, a, b):
+    return {"kind": kind, "title": title, "subtitle": subtitle, "source": source,
+            "a_name": a, "b_name": b}
+
+
+def _xs_check(kind, lat0, lon0, lat1, lon1):
+    from .xsection import KINDS, check_line
+    if kind not in KINDS:
+        raise HTTPException(400, "tipo de corte desconhecido")
+    try:
+        return check_line(lat0, lon0, lat1, lon1)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+async def _xs_render(sec, meta):
+    if meta["kind"] == "omega" and sec.get("w") is None:
+        raise HTTPException(404, "este modelo não fornece velocidade vertical (ω)")
+    try:
+        return await asyncio.get_running_loop().run_in_executor(POOL, render_xsection_worker, sec, meta)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@app.get("/api/xsection/kinds")
+async def xsection_kinds():
+    from .xsection import KINDS
+    return [{"id": k, "name": v} for k, v in KINDS.items()]
+
+
+@app.get("/api/xsection.png")
+async def xsection_png(model: str, run: str, step: int, lat0: float, lon0: float, lat1: float,
+                       lon1: float, kind: str = "dyn", a: str = "", b: str = ""):
+    """Vertical cross-section A→B of a forecast (model, run, step)."""
+    from .xsection import KINDS, section
+    m = _model(model)
+    r = _parse_run(run)
+    _xs_check(kind, lat0, lon0, lat1, lon1)
+    if not (m.covers(lat0, lon0) and m.covers(lat1, lon1)):
+        raise HTTPException(404, m.outside_msg())
+
+    async def produce():
+        if step not in await m.list_steps(r):
+            raise HTTPException(404, f"passo +{step}h não disponível para {m.name} {run}")
+        try:
+            sec = await section(m, r, step, lat0, lon0, lat1, lon1)
+        except FieldUnavailable as e:
+            raise HTTPException(404, str(e)) from None
+        valid = r + dt.timedelta(hours=step)
+        title = f"Corte vertical {a or 'A'} → {b or 'B'} — {m.name} {m.resolution}"
+        sub = (f"{KINDS[kind]}   ·   Run {fmt_time(r)}   ·   Válido {fmt_time(valid)} (+{step} h)")
+        return await _xs_render(sec, _xs_meta(kind, title, sub, m.source, a, b))
+    return await _cached_png(["xs", model, run, step, round(lat0, 3), round(lon0, 3), round(lat1, 3),
+                              round(lon1, 3), kind, a, b], produce)
 
 
 # ---------------------------------------------------------------- meteograms
@@ -747,6 +813,61 @@ async def case_meteogram_png(eid: str, lat: float, lon: float, model: str = "ecm
         except ValueError as e:
             raise HTTPException(404, str(e)) from None
     return await _cached_png(_case_key(ev, "meteogram", model, round(lat, 3), round(lon, 3), name), produce)
+
+
+@app.get("/api/cases/{eid}/xtimes")
+async def case_xtimes(eid: str, model: str = "ecmwf"):
+    """6-hourly analysis times of the event; ``archived`` when the run's step 0 is archived."""
+    from . import archive
+    ev = _case_event(eid)
+    if model not in MODELS:
+        raise HTTPException(400, "modelo desconhecido")
+    t0, t1 = archive.parse_t(ev["start"]), min(archive.parse_t(ev["end"]), archive._utcnow())
+    t = t0.replace(hour=(t0.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    if t < t0:
+        t += dt.timedelta(hours=6)
+    out = []
+    while t <= t1:
+        out.append({"time": t.isoformat(), "archived": 0 in archive.archived_steps(model, t)})
+        t += dt.timedelta(hours=6)
+    return out
+
+
+@app.get("/api/cases/{eid}/xsection.png")
+async def case_xsection_png(eid: str, time: str, lat0: float, lon0: float, lat1: float, lon1: float,
+                            model: str = "ecmwf", kind: str = "dyn", a: str = "", b: str = ""):
+    """Vertical cross-section A→B of the archived analysis (step 0 of the run at `time`)."""
+    from . import archive
+    from .archive import parse_t
+    from .models.base import Domain
+    from .xsection import KINDS, section
+    ev = _case_event(eid)
+    if model not in MODELS:
+        raise HTTPException(400, "modelo desconhecido")
+    m = MODELS[model]
+    t = parse_t(time)
+    _xs_check(kind, lat0, lon0, lat1, lon1)
+    if not (m.covers(lat0, lon0) and m.covers(lat1, lon1)):
+        raise HTTPException(404, m.outside_msg())
+    d = REGIONS[ev.get("region", "nea")].download_domain
+    clip = Domain(d.lon0, d.lon1, d.lat0, d.lat1)
+    if m.coverage:
+        lo0, lo1, la0, la1 = m.coverage
+        clip = Domain(max(clip.lon0, lo0), min(clip.lon1, lo1), max(clip.lat0, la0), min(clip.lat1, la1))
+
+    async def produce():
+        try:
+            sec = await section(m, t, 0, lat0, lon0, lat1, lon1, clip=clip)
+        except FieldUnavailable as e:
+            if 0 not in archive.archived_steps(model, t):
+                raise HTTPException(404, f"A análise {m.name} de {fmt_time(t)} ainda não está no arquivo "
+                                         "(run ainda não publicada ou por arquivar).") from None
+            raise HTTPException(404, f"{e} (análise {m.name} de {fmt_time(t)})") from None
+        title = f"Corte vertical {a or 'A'} → {b or 'B'} — {m.name} · evento «{ev['name']}»"
+        sub = f"{KINDS[kind]}   ·   Análise {fmt_time(t)} (passo +0 h, arquivo do evento)"
+        return await _xs_render(sec, _xs_meta(kind, title, sub, m.source, a, b))
+    return await _cached_png(_case_key(ev, "xsection", model, time, round(lat0, 3), round(lon0, 3),
+                                       round(lat1, 3), round(lon1, 3), kind, a, b), produce)
 
 
 # ---------------------------------------------------------------- front-end
