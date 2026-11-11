@@ -30,6 +30,10 @@ else:
     _default_cache = ROOT / "cache"
 
 CACHE_DIR = Path(os.environ.get("FORECAST_CACHE", _default_cache))
+# Event archive: one location shared by the development server and the packaged app, and
+# never touched by the automatic cache clean-up.
+ARCHIVE_DIR = Path(os.environ.get("FORECAST_ARCHIVE", _user_data_dir() / "archive"))
+ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 GRIB_CACHE = CACHE_DIR / "grib"
 IMG_CACHE = CACHE_DIR / "img"
 

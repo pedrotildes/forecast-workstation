@@ -98,6 +98,35 @@ Mapa interativo (Leaflet) com imagens pedidas diretamente pelo browser:
   e só 3 imagens de radar carregadas de cada vez).
 - `GET /api/live/layers` — camadas disponíveis e hora da última imagem.
 
+## Eventos (arquivo permanente)
+
+Separador **Eventos**: define-se um evento (nome, janela UTC, modelos, antecedência das
+previsões) e a app copia para um arquivo permanente — recortado à região "Atlântico NE e
+Ibéria" (42° W–14° E, 24°–52° N: Açores, Madeira, continente) e quantizado a 16 bits — os
+campos necessários para todos os produtos:
+
+- **sequência de análises**: todas as runs 00/06/12/18Z iniciadas durante o evento (passo +0 h
+  com todos os níveis de pressão, para sondagens; +3 h com os campos principais);
+- **previsões**: as runs 00Z/12Z desde N dias antes, de 6 em 6 h dentro da janela
+  (superfície + 850/700/500/250 hPa).
+- **radar** (RainViewer) de 10 em 10 min enquanto o evento decorre (mosaicos 512 px, z3–z6).
+
+O arquivo fica em `~/Library/Application Support/ForecastWorkstation/archive`
+(`%LOCALAPPDATA%\ForecastWorkstation\archive` no Windows; ou `FORECAST_ARCHIVE`), partilhado
+pelo servidor de desenvolvimento e pela app empacotada, e a limpeza da cache não lhe toca.
+`Model.fetch` recorre ao arquivo quando o servidor já não tem os dados, e as runs
+arquivadas aparecem nas listas com a indicação «arquivo». No separador Satélite/Radar, o
+seletor "Período" anima o evento com o satélite EUMETSAT (arquivo de anos no EUMETView) e o
+radar arquivado.
+
+Recuperação posterior: GFS (AWS `noaa-gfs-bdp-pds`; NOMADS ~10 dias) e ECMWF IFS/AIFS
+(espelho AWS `ecmwf-forecasts`) podem ser arquivados depois; **ICON-EU (~24 h) e radar
+(~2 h) só enquanto o evento decorre**. Com a app fechada, o arquivador pode correr sozinho:
+
+```bash
+cd backend && ../.venv/bin/python -m app.archive
+```
+
 ## Vagas de calor e de frio
 
 - Tmáx/Tmín diárias (UTC): Tmáx = períodos centrados entre 06–18 UTC; Tmín = 18–06 UTC.

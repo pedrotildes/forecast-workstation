@@ -225,7 +225,8 @@ function updateTime() {
     const t = tlValid(i);
     $("#tstep").textContent = `${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")} UTC`;
     const ago = Math.round((Date.now() - t.getTime()) / 60e3);
-    $("#tvalid").textContent = `${fmt(t).slice(0, 10)} · há ${ago < 120 ? ago + " min" : Math.round(ago / 60) + " h"}`;
+    $("#tvalid").textContent = ago > 2880 ? `${fmt(t).slice(0, 10)} · evento arquivado`
+      : `${fmt(t).slice(0, 10)} · há ${ago < 120 ? ago + " min" : Math.round(ago / 60) + " h"}`;
   } else if (isXTimed()) {
     $("#tstep").textContent = `+${S.x.steps[i]} h`;
     $("#tvalid").textContent = "ENS · válido " + fmt(tlValid(i));
@@ -252,10 +253,13 @@ function buildTicks() {
   const hourly = isLive();
   for (let i = 0; i <= n; i++) {
     const d = tlValid(i);
-    if (hourly ? d.getUTCMinutes() === 0 : (d.getUTCHours() === 0 && k++ % every === 0)) {
+    const longLive = hourly && (tlValid(n) - tlValid(0)) > 12 * 3600e3;   // archived event
+    if (hourly ? (d.getUTCMinutes() === 0 && (!longLive || d.getUTCHours() % 6 === 0))
+      : (d.getUTCHours() === 0 && k++ % every === 0)) {
       const el = document.createElement("span");
       el.style.left = (100 * i / n) + "%";
-      el.textContent = hourly ? `${String(d.getUTCHours()).padStart(2, "0")}h` : `${WEEK[d.getUTCDay()]} ${d.getUTCDate()}`;
+      el.textContent = hourly ? (longLive ? `${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}h`
+        : `${String(d.getUTCHours()).padStart(2, "0")}h`) : `${WEEK[d.getUTCDay()]} ${d.getUTCDate()}`;
       el.dataset.i = i;
       t.appendChild(el);
     }
@@ -541,9 +545,12 @@ async function setTab(tab) {
   S.tab = tab;
   stop();
   $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  for (const t of ["maps", "sounding", "meteogram", "compare", "extremes", "live"]) $(`#side-${t}`).classList.toggle("hidden", t !== tab);
-  $("#canvas").classList.toggle("hidden", tab === "live");
-  $("#model-bar").classList.toggle("hidden", tab === "live");
+  for (const t of ["maps", "sounding", "meteogram", "compare", "extremes", "live", "events"]) $(`#side-${t}`).classList.toggle("hidden", t !== tab);
+  $("#canvas").classList.toggle("hidden", tab === "live" || tab === "events");
+  $("#ev-panel").classList.toggle("hidden", tab !== "events");
+  $("#model-bar").classList.toggle("hidden", tab === "live" || tab === "events");
+  $("#timeline").classList.toggle("hidden", tab === "events");
+  if (tab === "events") { live.hide(); await showEvents(); return; }
   if (tab === "live") {
     status("A obter imagens de satélite…");
     try { await live.show(); status("Satélite: EUMETSAT · Radar: RainViewer", "ok"); } catch (e) { status("Erro: " + e.message, "err"); }
@@ -592,6 +599,108 @@ function initExtremes() {
     S.x.view = b.dataset.v; $$("#x-view button").forEach((x) => x.classList.toggle("on", x === b));
     buildTicks(); show();
   });
+}
+
+// ------------------------------------------------------------------ events (archive)
+const EV = { list: [], sel: null, timer: null };
+const fmtMB = (b) => (b > 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.round((b || 0) / 1e6) + " MB");
+const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+async function showEvents() {
+  try { EV.list = await api("/api/events"); } catch (e) { status("Erro: " + e.message, "err"); return; }
+  if (!EV.sel && EV.list.length) EV.sel = EV.list[EV.list.length - 1].id;
+  $("#ev-list").innerHTML = EV.list.length ? EV.list.map((e) => `<button class="ev-card ${e.id === EV.sel ? "on" : ""}" data-id="${e.id}">
+      <b>${esc(e.name)}</b><small>${e.start_label} → ${e.end_label}</small></button>`).join("")
+    : `<p class="hint">Ainda não há eventos.</p>`;
+  $$("#ev-list .ev-card").forEach((b) => b.onclick = () => { EV.sel = b.dataset.id; showEvents(); });
+  renderEventPanel();
+  clearTimeout(EV.timer);
+  if (S.tab === "events") EV.timer = setTimeout(showEvents, 8000);   // live progress
+}
+
+function renderEventPanel() {
+  const e = EV.list.find((x) => x.id === EV.sel);
+  const box = $("#ev-panel");
+  if (!e) { box.innerHTML = `<h2>Eventos</h2><p class="sub">Crie um evento na barra lateral para arquivar uma situação meteorológica.</p>`; return; }
+  const rows = (e.models || []).map((m) => {
+    const p = (e.progress || {})[m];
+    const name = `<td style="color:${MODEL_COLORS[m] || "#ccc"}"><b>${modelName(m)}</b></td>`;
+    if (!p) return `<tr>${name}<td colspan="4">à espera…</td></tr>`;
+    const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
+    return `<tr>${name}<td><span class="ev-bar"><div style="width:${pct}%"></div></span> ${p.done}/${p.total}</td>
+      <td>${p.fields} campos</td><td>${fmtMB(p.bytes)}</td>
+      <td>${p.unavailable ? `${p.unavailable} já não disponíveis no servidor` : ""}</td></tr>`;
+  }).join("");
+  box.innerHTML = `<h2>${esc(e.name)}</h2>
+    <div class="sub">${e.start_label} → ${e.end_label} · região Atlântico NE e Ibéria · previsões desde ${e.lead_days} dia(s) antes ·
+      ${e.radar_frames} imagens de radar · ${fmtMB(e.size || 0)} em disco</div>
+    ${e.notes ? `<div class="ev-notes">${esc(e.notes)}</div>` : ""}
+    <div class="ev-actions">
+      <button class="primary" data-a="maps">Abrir mapas do evento</button>
+      <button data-a="live">Satélite e radar do evento</button>
+      <button data-a="archive">Atualizar arquivo agora</button>
+      <button class="danger" data-a="delete">Apagar evento</button>
+    </div>
+    <table><thead><tr><th>Modelo</th><th>Runs/passos arquivados</th><th>Campos</th><th>Tamanho</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <p class="hint">O arquivo guarda a sequência de análises (todas as runs iniciadas durante o evento, com todos os níveis
+    para as sondagens) e as previsões das 00Z e 12Z feitas desde ${e.lead_days} dia(s) antes. Nos separadores Mapas,
+    Sondagens, Meteogramas e Comparar, as runs arquivadas aparecem na lista de runs com a indicação «arquivo».</p>`;
+  $$("#ev-panel .ev-actions button").forEach((b) => b.onclick = () => eventAction(e, b.dataset.a));
+}
+
+async function eventAction(e, a) {
+  if (a === "archive") {
+    await fetch(`/api/events/${e.id}/archive`, { method: "POST" });
+    status("Arquivo a atualizar em segundo plano…", "ok");
+    return;
+  }
+  if (a === "delete") {
+    if (!confirm(`Apagar o evento «${e.name}» e os dados arquivados que só ele usa? Esta ação não pode ser desfeita.`)) return;
+    await fetch(`/api/events/${e.id}`, { method: "DELETE" });
+    EV.sel = null;
+    showEvents();
+    return;
+  }
+  if (a === "live") {
+    await setTab("live");
+    await live.refresh(true);
+    await live.setEvent(e.id);
+    return;
+  }
+  // maps: first model of the event, the run started closest to the event start, region "nea"
+  const model = e.models[0] || "gfs";
+  S.region = "nea";
+  $("#region").value = "nea";
+  await selectModel(model, false);
+  const t0 = new Date(e.start + "Z").getTime();
+  const best = S.runs.map((r) => r.run).sort((x, y) => Math.abs(parseRun(x) - t0) - Math.abs(parseRun(y) - t0))[0];
+  if (best) await selectRun(best, new Date(t0));
+  await setTab("maps");
+}
+
+function initEvents() {
+  $("#ev-models").innerHTML = S.models.map((m) => `<label class="check" style="--c:${MODEL_COLORS[m.id]}">
+    <input type="checkbox" value="${m.id}" checked><span class="sw"></span>${m.name}</label>`).join("");
+  const now = Date.now();
+  const iso = (t) => new Date(t).toISOString().slice(0, 16);
+  $("#ev-start").value = iso(now - 24 * 3600e3);
+  $("#ev-end").value = iso(now + 24 * 3600e3);
+  $("#ev-create").onclick = async () => {
+    const body = {
+      name: $("#ev-name").value, start: $("#ev-start").value, end: $("#ev-end").value,
+      models: $$("#ev-models input").filter((x) => x.checked).map((x) => x.value),
+      lead_days: +$("#ev-lead").value, notes: $("#ev-notes").value, region: "nea",
+    };
+    const r = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) { status("Erro: " + (d.detail || r.statusText), "err"); return; }
+    EV.sel = d.id;
+    $("#ev-name").value = "";
+    $("#ev-notes").value = "";
+    status(`Evento «${d.name}» criado — a arquivar em segundo plano`, "ok");
+    showEvents();
+  };
 }
 
 // ------------------------------------------------------------------ animation
@@ -645,6 +754,7 @@ async function init() {
   });
   initPlaces();
   initExtremes();
+  initEvents();
   live.init({
     onPoint: (lat, lon, tab) => {
       S.lat = lat; S.lon = lon; S.place = ""; syncPlaces();

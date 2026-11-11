@@ -34,6 +34,8 @@ async def _startup():
     import multiprocessing as mp
     POOL = ProcessPoolExecutor(max_workers=3, mp_context=mp.get_context("spawn"))
     asyncio.create_task(_housekeeping())
+    from .archive import archiver_loop
+    asyncio.create_task(archiver_loop())
 
 
 async def _housekeeping():
@@ -94,10 +96,13 @@ async def models():
 async def runs(model_id: str):
     m = _model(model_id)
     rs = await m.list_runs()
+    from .archive import archived_runs
+    arch = set(archived_runs(m.id))
     out = []
     for i, r in enumerate(rs):
         steps = await m.list_steps(r) if i < 2 else None
-        out.append({"run": r.strftime("%Y%m%d%H"), "label": fmt_time(r), "steps": steps})
+        label = fmt_time(r) + (" · arquivo" if r in arch else "")
+        out.append({"run": r.strftime("%Y%m%d%H"), "label": label, "steps": steps})
     return out
 
 
@@ -472,6 +477,79 @@ async def live_layers():
         return await layers()
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"EUMETView indisponível: {e}") from None
+
+
+# ---------------------------------------------------------------- events (archive)
+def _event_view(ev: dict) -> dict:
+    from . import archive
+    return {**ev, "radar_frames": len(archive.radar_frames(ev["id"])),
+            "start_label": fmt_time(archive.parse_t(ev["start"])),
+            "end_label": fmt_time(archive.parse_t(ev["end"]))}
+
+
+@app.get("/api/events")
+async def events_list():
+    from . import archive
+    return [_event_view(e) for e in sorted(archive.load_events(), key=lambda e: e["start"])]
+
+
+@app.post("/api/events")
+async def events_create(body: dict):
+    from . import archive
+    try:
+        t0, t1 = archive.parse_t(body["start"]), archive.parse_t(body["end"])
+    except (KeyError, ValueError):
+        raise HTTPException(400, "datas inválidas (use AAAA-MM-DDTHH:MM, UTC)") from None
+    if t1 <= t0:
+        raise HTTPException(400, "o fim tem de ser depois do início")
+    if (t1 - t0).days > 14:
+        raise HTTPException(400, "um evento pode ter no máximo 14 dias")
+    models = [m for m in body.get("models", []) if m in MODELS] or ["gfs", "ecmwf"]
+    region = body.get("region", "nea")
+    if region not in REGIONS:
+        raise HTTPException(400, "região desconhecida")
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "indique um nome")
+    ev = archive.create_event(name, t0.isoformat(), t1.isoformat(), models, region,
+                              float(body.get("lead_days", 2)), body.get("notes", ""))
+    asyncio.create_task(archive.archive_event(ev["id"]))
+    return _event_view(ev)
+
+
+@app.post("/api/events/{eid}/archive")
+async def events_archive_now(eid: str):
+    from . import archive
+    if not archive.get_event(eid):
+        raise HTTPException(404, "evento desconhecido")
+    asyncio.create_task(archive.archive_event(eid))
+    if archive.parse_t(archive.get_event(eid)["end"]) >= dt.datetime.utcnow():
+        asyncio.create_task(archive.capture_radar(eid))
+    return {"ok": True}
+
+
+@app.delete("/api/events/{eid}")
+async def events_delete(eid: str):
+    from . import archive
+    if not archive.get_event(eid):
+        raise HTTPException(404, "evento desconhecido")
+    await asyncio.to_thread(archive.delete_event, eid, True)
+    return {"ok": True}
+
+
+@app.get("/api/events/{eid}/radar")
+async def events_radar(eid: str):
+    from . import archive
+    return archive.radar_frames(eid)
+
+
+@app.get("/api/archive/radar/{t}/{z}/{x}/{y}.png")
+async def archive_radar_tile(t: int, z: int, x: int, y: int):
+    from .archive import RADAR_DIR
+    p = RADAR_DIR / str(t) / f"{z}_{x}_{y}.png"
+    if not p.exists():
+        raise HTTPException(404, "sem mosaico")
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
 # ---------------------------------------------------------------- front-end

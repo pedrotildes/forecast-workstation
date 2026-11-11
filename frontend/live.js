@@ -13,7 +13,7 @@ const MAX_PX = 2048;
 
 const L_ = {
   map: null, cfg: null, sat: "ir105", overlays: new Set(["coast", "radar", "lightning"]),
-  hours: 3, frames: [], idx: 0, satOverlay: null, ovlImages: {}, radarLayers: {},
+  hours: 3, frames: [], idx: 0, event: null, events: [], evInterval: 30, satOverlay: null, ovlImages: {}, radarLayers: {},
   staticLayers: {}, radarOpacity: 0.8, onPoint: null, loaded: false, lastRefresh: 0,
 };
 
@@ -80,6 +80,17 @@ function satCfg() { return L_.cfg.sat.find((s) => s.id === L_.sat); }
 function buildFrames() {
   const sc = satCfg();
   let frames = [];
+  if (L_.event) {
+    // archived event: whole window, at the chosen interval (satellite archive is permanent)
+    const step = Math.max(L_.evInterval, sc ? sc.period : 10) * 60e3;
+    const t0 = Math.ceil(new Date(L_.event.start + "Z").getTime() / step) * step;
+    let t1 = new Date(L_.event.end + "Z").getTime();
+    if (sc) t1 = Math.min(t1, new Date(sc.latest).getTime());
+    for (let t = t0; t <= t1; t += step) frames.push(new Date(t));
+    L_.frames = frames;
+    L_.idx = 0;
+    return;
+  }
   if (sc) {
     const latest = new Date(sc.latest);
     const n = Math.round((L_.hours * 60) / sc.period) + 1;
@@ -92,6 +103,14 @@ function buildFrames() {
 }
 
 function radarFrameFor(t) {
+  if (L_.event) {          // archived RainViewer frames served by the app
+    let best = null, bd = 10 * 60e3 + 1;
+    for (const u of L_.event.radar) {
+      const d = Math.abs(u * 1000 - t.getTime());
+      if (d < bd) { bd = d; best = { time: u, path: `/api/archive/radar/${u}`, archive: true }; }
+    }
+    return best;
+  }
   const r = L_.cfg.radar;
   if (!r) return null;
   let best = null;
@@ -112,7 +131,8 @@ function overlayTime(o, t) {
 // the current frame plus the next two are kept on the map; tiles are browser-cached (48 h).
 function radarLayer(f) {
   if (!L_.radarLayers[f.path]) {
-    L_.radarLayers[f.path] = L.tileLayer(`${L_.cfg.radar.host}${f.path}/512/{z}/{x}/{y}/4/1_1.png`, {
+    const url = f.archive ? `${f.path}/{z}/{x}/{y}.png` : `${L_.cfg.radar.host}${f.path}/512/{z}/{x}/{y}/4/1_1.png`;
+    L_.radarLayers[f.path] = L.tileLayer(url, {
       pane: "radar", opacity: 0, maxNativeZoom: 7, maxZoom: 12, tileSize: 512, zoomOffset: -1,
       attribution: 'Radar © <a href="https://www.rainviewer.com" target="_blank">RainViewer</a>',
     }).addTo(L_.map);
@@ -185,11 +205,15 @@ export async function render(i = L_.idx) {
   for (const [path, lay] of Object.entries(L_.radarLayers)) {
     if (!keep.has(path)) { L_.map.removeLayer(lay); delete L_.radarLayers[path]; }
   }
-  for (const f of L_.cfg.radar ? L_.cfg.radar.frames : []) {
+  const candidates = L_.event
+    ? [...keep].map((p) => ({ path: p, archive: true }))
+    : (L_.cfg.radar ? L_.cfg.radar.frames : []);
+  for (const f of candidates) {
     if (keep.has(f.path)) radarLayer(f).setOpacity(rf && f.path === rf.path ? L_.radarOpacity : 0);
   }
   $("#live-radar-time").textContent = L_.overlays.has("radar")
-    ? (rf ? `radar ${new Date(rf.time * 1000).toISOString().slice(11, 16)} UTC` : "radar: sem imagem para esta hora") : "";
+    ? (rf ? `radar ${new Date(rf.time * 1000).toISOString().slice(11, 16)} UTC`
+          : (L_.event ? "radar: não arquivado para esta hora" : "radar: sem imagem para esta hora")) : "";
   await Promise.all(jobs);
 }
 
@@ -223,9 +247,38 @@ export async function refresh(force = false) {
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   L_.cfg = await r.json();
   L_.lastRefresh = Date.now();
+  try {
+    const evs = await (await fetch("/api/events")).json();
+    L_.events = evs;
+    const sel = $("#live-event");
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">Tempo real</option>` +
+      evs.map((e) => `<option value="${e.id}">${e.name} (${e.start_label.slice(4, 10)} → ${e.end_label.slice(4, 10)})</option>`).join("");
+    sel.value = evs.some((e) => e.id === cur) ? cur : "";
+  } catch { /* events are optional */ }
   fillControls();
   buildFrames();
 }
+
+export async function setEvent(eid) {
+  const ev = (L_.events || []).find((e) => e.id === eid);
+  if (!eid || !ev) {
+    L_.event = null;
+  } else {
+    const radar = await (await fetch(`/api/events/${eid}/radar`)).json();
+    L_.event = { ...ev, radar };
+  }
+  $("#live-event").value = eid || "";
+  $("#live-interval-row").style.display = L_.event ? "" : "none";
+  $("#live-hours").closest("section").querySelector("#live-hours").disabled = !!L_.event;
+  for (const lay of Object.values(L_.radarLayers)) L_.map && L_.map.removeLayer(lay);
+  L_.radarLayers = {};
+  buildFrames();
+  L_.onFramesChanged();
+  await render();
+  preloadAll();
+}
+export const currentEvent = () => L_.event;
 
 function fillControls() {
   const groups = {};
@@ -254,6 +307,10 @@ export function init({ onPoint, onFramesChanged }) {
   $("#live-opacity").oninput = (e) => { L_.radarOpacity = +e.target.value / 100; render(); };
   $$("#live-views button").forEach((b) => b.onclick = () => L_.map && L_.map.fitBounds(VIEWS[b.dataset.v]));
   $("#live-refresh").onclick = async () => { await refresh(true); onFramesChanged(); render(); preloadAll(); };
+  $("#live-event").onchange = (e) => setEvent(e.target.value);
+  $("#live-interval").onchange = (e) => {
+    L_.evInterval = +e.target.value; buildFrames(); onFramesChanged(); render(); preloadAll();
+  };
 }
 
 export async function show() {

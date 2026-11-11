@@ -111,6 +111,34 @@ _DECODED = _LRU(500 * 2**20)
 class Model:
     """Base class. Subclasses implement run/step discovery and downloads."""
 
+    def __init_subclass__(cls, **kw):
+        """Wrap each subclass's run/step discovery so archived (event) runs are listed too,
+        even after they have disappeared from the servers."""
+        super().__init_subclass__(**kw)
+        if "list_runs" in cls.__dict__:
+            orig_runs = cls.__dict__["list_runs"]
+
+            async def list_runs(self, _o=orig_runs):
+                from .. import archive
+                try:
+                    live = await _o(self)
+                except Exception:  # noqa: BLE001
+                    live = []
+                extra = [r for r in archive.archived_runs(self.id) if r not in live]
+                return list(live) + extra          # live runs first, newest first
+            cls.list_runs = list_runs
+        if "list_steps" in cls.__dict__:
+            orig_steps = cls.__dict__["list_steps"]
+
+            async def list_steps(self, run, _o=orig_steps):
+                from .. import archive
+                try:
+                    live = await _o(self, run)
+                except Exception:  # noqa: BLE001
+                    live = []
+                return sorted(set(live) | set(archive.archived_steps(self.id, run)))
+            cls.list_steps = list_steps
+
     id: str = ""
     name: str = ""
     resolution: str = "0.25°"
@@ -198,10 +226,26 @@ class Model:
 
         lock_key = (self.id, run, step, dl_domain.tag if not self.global_download else "g")
         lock = self._locks.setdefault(lock_key, asyncio.Lock())
+        archived: dict[Key, Field] = {}
         async with lock:
             missing = [k for k in keys if not self._path(run, step, dl_domain, k).exists()]
             if missing:
-                got = await self._download(run, step, missing, dl_domain)
+                # Event archive first (permanent, cropped copies), then the servers.
+                from .. import archive
+
+                def _from_archive():
+                    return {k: f for k in missing
+                            if (f := archive.load_field(self.id, run, step, k, domain)) is not None}
+
+                archived = await asyncio.to_thread(_from_archive)
+                missing = [k for k in missing if k not in archived]
+            if missing:
+                try:
+                    got = await self._download(run, step, missing, dl_domain)
+                except FieldUnavailable:
+                    if not archived:
+                        raise
+                    got = {}
                 for k, buf in got.items():
                     p = self._path(run, step, dl_domain, k)
                     p.parent.mkdir(parents=True, exist_ok=True)
@@ -209,11 +253,11 @@ class Model:
                     tmp.write_bytes(buf)
                     tmp.replace(p)
 
-        out: dict[Key, Field] = {}
+        out: dict[Key, Field] = dict(archived)
         todo = []
         for k in keys:
             p = self._path(run, step, dl_domain, k)
-            if not p.exists():
+            if k in out or not p.exists():
                 continue
             ck = (str(p), domain.tag)
             f = _DECODED.get(ck)

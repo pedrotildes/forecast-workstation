@@ -89,6 +89,8 @@ class Region:
 REGIONS: dict[str, Region] = {r.id: r for r in [
     Region("europe", "Europa", (-25, 40, 33, 68), "lcc", 8, 50, "50m", barbs=28, grid=5),
     Region("natl", "Atlântico Norte", (-65, 25, 25, 68), "lcc", -20, 48, "110m", barbs=30),
+    Region("nea", "Atlântico NE e Ibéria (eventos)", (-33, 6, 28.5, 48), "lcc", -13, 39, "50m",
+           barbs=28, grid=5),
     Region("iberia", "Península Ibérica", (-13, 5, 35, 45), "lcc", -4, 40, "50m", barbs=26,
            upsample=2, grid=2),
     Region("portugal", "Portugal Continental", (-12.0, -4.6, 36.6, 42.4), "merc", -8, 40,

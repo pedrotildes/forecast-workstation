@@ -18,6 +18,7 @@
     <button class="tab" data-tab="compare">Comparar</button>
     <button class="tab" data-tab="extremes">Calor/Frio</button>
     <button class="tab" data-tab="live">Satélite/Radar</button>
+    <button class="tab" data-tab="events">Eventos</button>
   </nav>
   <div class="model-bar" id="model-bar">
     <div class="seg" id="models"></div>
@@ -210,6 +211,14 @@
   <!-- ======================= sidebar: satellite / radar -->
   <aside class="sidebar hidden" id="side-live">
     <section>
+      <h3>Período</h3>
+      <select id="live-event"><option value="">Tempo real</option></select>
+      <div class="row" id="live-interval-row" style="display:none">
+        <select id="live-interval">
+          <option value="10">imagens de 10 em 10 min</option><option value="30" selected>de 30 em 30 min</option>
+          <option value="60">de hora a hora</option><option value="180">de 3 em 3 h</option>
+        </select>
+      </div>
       <h3>Satélite (Meteosat)</h3>
       <select id="live-sat"></select>
       <p class="hint" id="live-latest"></p>
@@ -240,9 +249,41 @@
     </section>
   </aside>
 
+  <!-- ======================= sidebar: events (archive) -->
+  <aside class="sidebar hidden" id="side-events">
+    <section>
+      <h3>Eventos arquivados</h3>
+      <div id="ev-list" class="ev-list"></div>
+    </section>
+    <section>
+      <h3>Novo evento</h3>
+      <label class="fld">Nome <input id="ev-name" placeholder="ex.: Depressão Charles"></label>
+      <label class="fld">Início (UTC) <input id="ev-start" type="datetime-local"></label>
+      <label class="fld">Fim (UTC) <input id="ev-end" type="datetime-local"></label>
+      <h3>Modelos</h3>
+      <div id="ev-models" class="checks"></div>
+      <div class="row">
+        <label class="fld">Previsões desde <select id="ev-lead">
+          <option value="1">1 dia antes</option><option value="2" selected>2 dias antes</option><option value="3">3 dias antes</option>
+        </select></label>
+      </div>
+      <label class="fld">Notas <textarea id="ev-notes" rows="2"></textarea></label>
+      <button id="ev-create" class="primary">Criar e arquivar</button>
+    </section>
+    <section class="hint">
+      Os servidores apagam os dados ao fim de pouco tempo (ICON-EU ~24 h, radar ~2 h,
+      GFS ~10 dias). Um evento copia para um arquivo permanente, recortado à região do
+      Atlântico NE e Península (Açores, Madeira e continente), os campos de todas as runs
+      relevantes — e, enquanto decorre, o radar de 10 em 10 min. O GFS e o ECMWF também
+      podem ser recuperados mais tarde a partir dos arquivos na AWS; o ICON-EU e o radar
+      só enquanto o evento decorre (a app tem de estar aberta, ou o arquivador a correr).
+    </section>
+  </aside>
+
   <!-- ======================= viewer -->
   <section class="viewer">
     <div id="livemap" class="hidden"></div>
+    <div id="ev-panel" class="ev-panel hidden"></div>
     <div class="canvas" id="canvas">
       <img id="img" alt="">
       <div id="grid" class="grid hidden"></div>

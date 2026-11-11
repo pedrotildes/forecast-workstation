@@ -142,3 +142,27 @@ select:focus, input:focus { border-color: var(--accent); }
 .live-pop button:hover { background: #e2e8f0; }
 #live-opacity { padding: 0; accent-color: var(--accent); background: none; border: 0; }
 #live-ovl .check { font-size: 12.5px; }
+
+/* ---------- events */
+.ev-list { display: flex; flex-direction: column; gap: 6px; }
+.ev-card { text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
+  padding: 8px 10px; cursor: pointer; color: var(--text); }
+.ev-card.on { border-color: var(--accent); }
+.ev-card b { display: block; }
+.ev-card small { color: var(--muted); }
+.fld { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; margin-bottom: 6px; flex: 1; }
+textarea { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+  width: 100%; color: inherit; font: inherit; resize: vertical; }
+.ev-panel { flex: 1; overflow-y: auto; padding: 22px 28px; background: #0b0d11; }
+.ev-panel h2 { margin: 0 0 4px; font-size: 20px; }
+.ev-panel .sub { color: var(--muted); margin-bottom: 16px; }
+.ev-panel table { border-collapse: collapse; width: 100%; max-width: 900px; margin: 10px 0 18px; }
+.ev-panel th, .ev-panel td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.ev-panel th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+.ev-bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; width: 160px; display: inline-block; vertical-align: middle; }
+.ev-bar > div { height: 100%; background: var(--ok); }
+.ev-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.ev-actions button { padding: 8px 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; }
+.ev-actions button.primary { width: auto; margin: 0; border: 0; }
+.ev-actions button.danger { border-color: #7f1d1d; color: #fecaca; }
+.ev-notes { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; max-width: 900px; }

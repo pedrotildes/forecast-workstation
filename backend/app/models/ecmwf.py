@@ -117,21 +117,28 @@ class _ECMWFBase(Model):
         p = GRIB_CACHE / self.id / run.strftime("%Y%m%d%H") / f"{step:03d}" / "index.jsonl"
         last_err = None
         for m in MIRRORS:
-            try:
-                if p.exists():
-                    text = p.read_text()
-                else:
-                    r = await c.get(self._url(m, run, step, "index"))
-                    r.raise_for_status()
-                    text = r.text
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_text(text)
-                entries = [json.loads(line) for line in text.splitlines() if line.strip()]
-                res = (self._url(m, run, step, "grib2"), entries)
-                self._idx_cache[ck] = res
-                return res
-            except (httpx.HTTPError, json.JSONDecodeError) as e:
-                last_err = e
+            # S3 answers 503 "slow down" under load: retry with back-off before giving up
+            for attempt in range(4):
+                try:
+                    if p.exists():
+                        text = p.read_text()
+                    else:
+                        r = await c.get(self._url(m, run, step, "index"))
+                        r.raise_for_status()
+                        text = r.text
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_text(text)
+                    entries = [json.loads(line) for line in text.splitlines() if line.strip()]
+                    res = (self._url(m, run, step, "grib2"), entries)
+                    self._idx_cache[ck] = res
+                    return res
+                except httpx.HTTPStatusError as e:
+                    last_err = e
+                    if e.response.status_code < 500:
+                        break                      # 404: not on this mirror
+                except (httpx.HTTPError, json.JSONDecodeError) as e:
+                    last_err = e
+                await asyncio.sleep(2.0 * 2 ** attempt)
         raise FieldUnavailable(f"{self.name}: index unavailable for {run:%Y%m%d%H} +{step}h ({last_err})")
 
     def _find(self, entries: list[dict], key: Key) -> dict | None:
