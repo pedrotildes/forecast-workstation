@@ -19,7 +19,8 @@ warnings.filterwarnings("ignore")
 
 WEEK = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 MON = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-MODEL_COLORS = {"gfs": "#2563eb", "ecmwf": "#dc2626", "aifs": "#16a34a", "icon_eu": "#9333ea"}
+MODEL_COLORS = {"gfs": "#2563eb", "ecmwf": "#dc2626", "aifs": "#16a34a", "icon_eu": "#9333ea",
+                "obs": "#111111"}
 KMH = 3.6
 
 

@@ -217,3 +217,93 @@ def render_point(data: dict) -> bytes:
              "(GFS/ICON-EU horário, ECMWF 3 h, AIFS 6 h) — o mais próximo de uma reanálise disponível em tempo real",
              fontsize=8.8, color="#1b263b", va="top")
     return _png(fig)
+
+
+# ------------------------------------------------------------------ case meteogram
+def render_case_meteogram(data: dict) -> bytes:
+    prof, chain = data["profile"], data["chain"]
+    if prof is None and not chain["time"]:
+        raise ValueError("sem dados")
+    panels = ([("th", 3.6)] if prof is not None else []) + [("msl", 1.4), ("wind", 1.7),
+                                                             ("precip", 1.7), ("t2m", 1.4)]
+    fig_h = sum(h for _, h in panels) + 1.6
+    fig = Figure(figsize=(14.5, fig_h), dpi=110, facecolor="white")
+    FigureCanvasAgg(fig)
+    gs = fig.add_gridspec(len(panels), 1, height_ratios=[h for _, h in panels], hspace=0.1,
+                          left=0.06, right=0.93, top=1 - 1.0 / fig_h, bottom=0.45 / fig_h)
+    axes, first = {}, None
+    for i, (name, _) in enumerate(panels):
+        axes[name] = fig.add_subplot(gs[i], sharex=first)
+        first = first or axes[name]
+    ax_list = [axes[n] for n, _ in panels]
+    col = MODEL_COLORS.get(data["model_id"], "#333")
+    times_all = list(chain["time"]) + list(data["times"])
+
+    if prof is not None:
+        ax = axes["th"]
+        tt = mdates.date2num(data["times"])
+        lv = np.array(data["levels"], dtype=float)
+        rh_lv = [60, 70, 80, 90, 95, 100.1]
+        ax.contourf(tt, lv, prof["r"], levels=rh_lv,
+                    cmap=ListedColormap(["#d8f3dc", "#95d5b2", "#52b788", "#2d6a4f", "#1b4332"]),
+                    norm=BoundaryNorm(rh_lv, 5), zorder=2)
+        tc = prof["t"] - 273.15
+        tlev = np.arange(-60, 41, 4)
+        cs = ax.contour(tt, lv, tc, levels=tlev, colors="#b91c1c", linewidths=0.8, zorder=3,
+                        linestyles=["--" if x < 0 else "-" for x in tlev])
+        ax.clabel(cs, fmt="%d", fontsize=6.5, inline_spacing=1)
+        c0 = ax.contour(tt, lv, tc, levels=[0], colors="#1d4ed8", linewidths=2.0, zorder=4)
+        ax.clabel(c0, fmt="0°C", fontsize=7)
+        if np.isfinite(prof["sp"]).any():
+            ax.fill_between(tt, prof["sp"], 1050, color="#8d6e63", alpha=0.85, zorder=5, lw=0)
+        for i, p in enumerate(lv):
+            if p in (1000, 925, 850, 700, 600, 500, 400, 300, 250, 200) or len(lv) <= 14:
+                ax.barbs(tt, np.full(len(tt), p), prof["u"][i] * 1.943844, prof["v"][i] * 1.943844,
+                         length=5.2, linewidth=0.5, zorder=6, sizes={"emptybarb": 0.05})
+        for t in data["obs"]["times"]:
+            ax.axvline(t, color="#111", lw=0.8, ls=":", zorder=7)
+            ax.text(t, 0.995, "▼", transform=ax.get_xaxis_transform(), ha="center", va="top",
+                    fontsize=8, color="#111", zorder=8)
+        ax.set_yscale("log")
+        ax.set_ylim(1030, lv.min() - 5)
+        ticks = [1000, 925, 850, 700, 500, 400, 300, 200]
+        ax.set_yticks([x for x in ticks if x >= lv.min()])
+        ax.set_yticklabels([str(x) for x in ticks if x >= lv.min()])
+        ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_ylabel("hPa", fontsize=8)
+        extra = (f" · ▼ radiossonda de {data['obs']['station']} ({data['obs']['km']} km)"
+                 if data["obs"]["times"] else "")
+        _panel_label(ax, "Análises de 6 em 6 h: HR ≥60 % (verde), T (°C; 0 °C azul), vento (kt)" + extra)
+
+    t = chain["time"]
+    if t:
+        axes["msl"].plot(t, chain["msl"], color=col, lw=1.8)
+        axes["wind"].plot(t, chain["wind"], color="#0f766e", lw=1.8, label="Vento médio 10 m")
+        if np.isfinite(chain["gust"]).any():
+            axes["wind"].plot(t, chain["gust"], color="#ea580c", lw=1.2, marker=".", ms=3, label="Rajada")
+        axes["wind"].legend(loc="upper right", fontsize=7, ncol=2, framealpha=0.9)
+        pr = np.nan_to_num(np.array(chain["precip"], dtype=float))
+        hrs = np.array([h or 1 for h in chain["precip_h"]], float)
+        tn = mdates.date2num(t)
+        axes["precip"].bar(tn - hrs / 24, pr / hrs, width=hrs / 24 * 0.92, align="edge", color="#2563eb")
+        ax2 = axes["precip"].twinx()
+        ax2.plot(t, np.cumsum(pr), color="#0b3c8c", lw=1.5)
+        ax2.set_ylabel("acumulado (mm)", fontsize=8, color="#0b3c8c")
+        ax2.tick_params(labelsize=7.5, colors="#0b3c8c")
+        axes["t2m"].plot(t, chain["t2m"], color="#d00000", lw=1.8)
+        tot = float(np.nansum(pr))
+        _panel_label(axes["precip"], f"Precipitação: intensidade (mm/h) e acumulada — total {tot:.0f} mm")
+    _panel_label(axes["msl"], "Pressão ao nível médio do mar (hPa)")
+    _panel_label(axes["wind"], "Vento a 10 m e rajada (km/h)")
+    _panel_label(axes["t2m"], "Temperatura a 2 m (°C)")
+    _time_axis(ax_list, min(times_all), max(times_all), ax_list[0])
+    ax_list[-1].set_xlabel("Hora (UTC)", fontsize=8)
+    ns, ew = ("N" if data["lat"] >= 0 else "S"), ("E" if data["lon"] >= 0 else "W")
+    loc = f"{data['place'] + ' · ' if data['place'] else ''}{abs(data['lat']):.2f}°{ns} {abs(data['lon']):.2f}°{ew}"
+    fig.text(0.06, 1 - 0.22 / fig_h, f"Meteograma do caso «{data['event']}» — {data['model']} · {loc}",
+             fontsize=13, fontweight="bold", color="#0d1b2a", va="top")
+    fig.text(0.06, 1 - 0.52 / fig_h, "Secção tempo-altura das análises arquivadas; superfície pela cadeia "
+             "de curto prazo (primeiras horas de cada run de 6 em 6 h)", fontsize=9, color="#1b263b", va="top")
+    fig.text(0.93, 0.08 / fig_h, f"Dados: {data['source']} · Forecast Workstation", fontsize=7,
+             color="#666", ha="right")
+    return _png(fig)

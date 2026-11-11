@@ -682,6 +682,73 @@ async def case_point_png(eid: str, lat: float, lon: float, name: str = "",
     return await _cached_png(_case_key(ev, "point", round(lat, 3), round(lon, 3), name, ms), produce)
 
 
+@app.get("/api/cases/{eid}/obs")
+async def case_obs(eid: str):
+    """Stations, the event's 00/12Z times and the observed soundings already archived."""
+    from . import obs
+    ev = _case_event(eid)
+    return {"stations": [obs.station_info(s[0]) for s in obs.STATIONS],
+            "times": [t.isoformat() for t in obs.event_obs_times(ev)],
+            "archived": obs.archived_obs(ev)}
+
+
+@app.get("/api/cases/{eid}/sounding.png")
+async def case_sounding_png(eid: str, time: str, station: str = "", lat: float | None = None,
+                            lon: float | None = None, name: str = "",
+                            models: str = "gfs,ecmwf,aifs,icon_eu"):
+    from . import obs
+    from .archive import parse_t
+    from .cases import case_sounding_items
+    from .maps.compose import fmt_time
+    ev = _case_event(eid)
+    t = parse_t(time)
+    if station:
+        if station not in obs.STATION:
+            raise HTTPException(404, "estação desconhecida")
+        si = obs.station_info(station)
+        lat, lon, name = si["lat"], si["lon"], si["name"]
+    if lat is None or lon is None:
+        raise HTTPException(400, "indique uma estação ou um ponto")
+    _check_point(lat, lon)
+    ms = [m for m in models.split(",") if m in MODELS]
+
+    async def produce():
+        items = await case_sounding_items(ev, t, lat, lon, station or None, ms)
+        if not items:
+            raise HTTPException(404, "sem sondagem observada nem análises arquivadas para esta hora")
+        has_obs = any(it.get("obs") for it in items)
+        ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
+        title = (f"Sondagem — {name + ' · ' if name else ''}{abs(lat):.2f}°{ns} {abs(lon):.2f}°{ew}"
+                 f" · evento «{ev['name']}»")
+        sub = (f"{fmt_time(t)} · " + ("radiossonda observada (preto) e " if has_obs else
+               ("sem radiossonda arquivada para esta hora · " if station else "")) +
+               "análises dos modelos (passo +0 h)")
+        data = {"items": items, "title": title, "subtitle": sub}
+        return await asyncio.get_running_loop().run_in_executor(POOL, render_case_worker, "sounding", data)
+    return await _cached_png(_case_key(ev, "sounding", time, station, round(lat, 3), round(lon, 3), ms,
+                                       obs._path(station, t).exists() if station else None), produce)
+
+
+@app.get("/api/cases/{eid}/meteogram.png")
+async def case_meteogram_png(eid: str, lat: float, lon: float, model: str = "ecmwf", name: str = ""):
+    from .cases import case_meteogram_data
+    ev = _case_event(eid)
+    _check_point(lat, lon)
+    if model not in MODELS:
+        raise HTTPException(400, "modelo desconhecido")
+
+    async def produce():
+        try:
+            data = await case_meteogram_data(ev, model, lat, lon, name)
+        except FieldUnavailable as e:
+            raise HTTPException(404, str(e)) from None
+        try:
+            return await asyncio.get_running_loop().run_in_executor(POOL, render_case_worker, "meteogram", data)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from None
+    return await _cached_png(_case_key(ev, "meteogram", model, round(lat, 3), round(lon, 3), name), produce)
+
+
 # ---------------------------------------------------------------- front-end
 @app.get("/")
 async def index():

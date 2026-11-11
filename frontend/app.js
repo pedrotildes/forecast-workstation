@@ -29,7 +29,7 @@ const S = {
     times: [], idx: 0, a: "gfs", b: "ecmwf", v: "gh", level: 500, accum: 6, dregion: "europe",
     axes: {} },
   cs: { eid: null, product: "track", models: ["ecmwf", "gfs", "aifs", "icon_eu"], fc: "ecmwf",
-    model: "ecmwf", region: "nea", every: 12, systems: [] },
+    model: "ecmwf", region: "nea", every: 12, systems: [], station: "08536", time: null, obs: null },
   x: { product: "point", region: "iberia", days: "1-16", sigma: "1p5", view: "sum",
     steps: [], run: null, idx: 0 },
 };
@@ -98,7 +98,11 @@ function caseUrl() {
     precip: ["totals.png", { model: c.model, kind: "precip", region: c.region }],
     gust: ["totals.png", { model: c.model, kind: "gust", region: c.region }],
     point: ["point.png", { models: ms, lat: S.lat, lon: S.lon, name: S.place || "" }],
+    sounding: ["sounding.png", c.station ? { time: c.time || "", station: c.station, models: ms }
+      : { time: c.time || "", lat: S.lat, lon: S.lon, name: S.place || "", models: ms }],
+    meteogram: ["meteogram.png", { model: c.model, lat: S.lat, lon: S.lon, name: S.place || "" }],
   }[c.product];
+  if (c.product === "sounding" && !c.time) return [];
   return [`/api/cases/${c.eid}/${u[0]}?` + qs(u[1])];
 }
 function urlsAt(i) {
@@ -159,7 +163,7 @@ async function show() {
   $("#error").classList.add("hidden");
   if (!urls.length) return;
   const slow = S.tab === "meteogram" || (S.tab === "compare" && S.cmp.mode === "meteogram") ||
-    (S.tab === "cases" && ["pressure", "sequence", "point"].includes(S.cs.product)) ||
+    (S.tab === "cases" && ["pressure", "sequence", "point", "meteogram"].includes(S.cs.product)) ||
     (S.tab === "extremes" && !S.x.product.startsWith("ens"));
   const job = slow ? Math.random().toString(36).slice(2) : null;
   const cached = urls.every((u) => frames.has(u));
@@ -746,7 +750,27 @@ function setCaseProduct(p) {
   $$("#side-cases .case-only").forEach((el) => el.classList.toggle("hidden", !el.dataset.p.split(" ").includes(p)));
   if (p === "systems") { loadSystems(); $("#img").classList.add("hidden"); return; }
   $("#img").classList.remove("hidden");
+  if (p === "sounding") { loadCaseObs().then(show); return; }
   show();
+}
+
+async function loadCaseObs() {
+  if (!S.cs.eid) return;
+  const d = await api(`/api/cases/${S.cs.eid}/obs`);
+  S.cs.obs = d;
+  const arch = d.archived || {};
+  $("#case-station").innerHTML = `<option value="">— ponto escolhido no mapa / local —</option>` +
+    d.stations.map((st) => `<option value="${st.id}">${st.name} (${st.id})${arch[st.id] ? ` · ${arch[st.id].length} arquivada(s)` : ""}</option>`).join("");
+  $("#case-station").value = S.cs.station;
+  const fmtT = (iso) => fmt(new Date(iso + "Z"));
+  const have = new Set(arch[S.cs.station] || []);
+  $("#case-time").innerHTML = d.times.map((t) => `<option value="${t}">${fmtT(t)}${have.has(t) ? " · radiossonda ✓" : ""}</option>`).join("");
+  if (!S.cs.time || !d.times.includes(S.cs.time)) {
+    S.cs.time = (arch[S.cs.station] || [])[0] || d.times[Math.floor(d.times.length / 2)] || null;
+  }
+  $("#case-time").value = S.cs.time || "";
+  $("#case-obs-note").textContent = "Radiossondas: Univ. Wyoming (BUFR) e NOAA IGRA v2 (1–2 dias de atraso). "
+    + "As que forem encontradas ficam guardadas no arquivo do evento.";
 }
 
 async function loadSystems() {
@@ -791,6 +815,8 @@ function initCases() {
   $("#case-region").value = S.cs.region;
   $("#case-region").onchange = (e) => { S.cs.region = e.target.value; show(); };
   $("#case-every").onchange = (e) => { S.cs.every = +e.target.value; show(); };
+  $("#case-station").onchange = async (e) => { S.cs.station = e.target.value; await loadCaseObs(); show(); };
+  $("#case-time").onchange = (e) => { S.cs.time = e.target.value; show(); };
   $("#case-sys-add").onclick = () => {
     readSystems();
     S.cs.systems.push({ name: "Novo", lat: 40, lon: -15, time: new Date().toISOString().slice(0, 16) });

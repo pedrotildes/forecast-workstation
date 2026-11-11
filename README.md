@@ -142,6 +142,15 @@ Separador **Casos**, sobre um evento arquivado:
 - **Precipitação total** e **rajada máxima** do evento — a partir da *cadeia de curto prazo*
   (primeiras 6 h de cada run de 6 em 6 h; GFS/ICON-EU horário, ECMWF 3 h, AIFS 6 h).
 - **Evolução num local** — pressão, vento/rajada, intensidade da precipitação e T2m.
+- **Sondagens** — radiossonda observada (preto) e análises dos modelos (passo +0 h) sobrepostas,
+  com hodógrafas e tabela de índices lado a lado (observado vs. modelos).
+- **Meteograma do caso** — secção tempo-altura das análises de 6 em 6 h (HR, T, vento), com as horas
+  das radiossondas da estação mais próxima, e os painéis de superfície da cadeia de curto prazo.
+
+Radiossondas observadas (`app/obs.py`): Univ. Wyoming (BUFR de alta resolução) e, em alternativa,
+NOAA IGRA v2 (ficheiros *year-to-date*, 1–2 dias de atraso), para Lisboa, Funchal, Lajes, Corunha,
+Santander, Madrid, Saragoça, Múrcia, Palma, Barcelona, Tenerife e Bordéus. O arquivador recolhe as
+sondagens das 00/12Z de cada evento e guarda-as em `archive/obs/`.
 
 ## Vagas de calor e de frio
 

@@ -294,10 +294,19 @@
         <button data-p="precip">Precipitação total do evento</button>
         <button data-p="gust">Rajada máxima do evento</button>
         <button data-p="point">Evolução num local</button>
+        <button data-p="sounding">Sondagens (radiossonda + modelos)</button>
+        <button data-p="meteogram">Meteograma do caso</button>
         <button data-p="systems">Sistemas a seguir…</button>
       </div>
     </section>
-    <section class="case-only" data-p="track pressure point">
+    <section class="case-only" data-p="sounding">
+      <h3>Radiossonda</h3>
+      <select id="case-station"></select>
+      <h3>Hora (UTC)</h3>
+      <select id="case-time"></select>
+      <p class="hint" id="case-obs-note"></p>
+    </section>
+    <section class="case-only" data-p="track pressure point sounding">
       <h3>Modelos (análises)</h3>
       <div id="case-models" class="checks"></div>
     </section>
@@ -305,7 +314,7 @@
       <h3>Previsões a comparar</h3>
       <select id="case-fc"></select>
     </section>
-    <section class="case-only" data-p="sequence precip gust">
+    <section class="case-only" data-p="sequence precip gust meteogram">
       <h3>Modelo</h3>
       <select id="case-model"></select>
     </section>
@@ -317,7 +326,7 @@
         <select id="case-every"><option value="6">6 em 6 h</option><option value="12" selected>12 em 12 h</option><option value="24">24 em 24 h</option></select>
       </div>
     </section>
-    <section class="case-only" data-p="point">
+    <section class="case-only" data-p="point meteogram">
       <h3>Local</h3>
       <div class="place-box"></div>
       <button class="primary go">Ver evolução</button>

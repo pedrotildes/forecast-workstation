@@ -43,5 +43,12 @@ def render_thermogram_worker(data: dict, place: str):
 
 def render_case_worker(kind: str, data: dict):
     from . import cases_render
+    if kind == "sounding":
+        from .sounding.analysis import analyse
+        from .sounding.compare import render_skewt_multi
+        for it in data["items"]:
+            it["an"] = analyse(it["snd"]["profile"])
+        return render_skewt_multi(data["items"], data["title"], data["subtitle"])
     return {"pressure": cases_render.render_pressure, "sequence": cases_render.render_sequence,
-            "point": cases_render.render_point}[kind](data)
+            "point": cases_render.render_point,
+            "meteogram": cases_render.render_case_meteogram}[kind](data)

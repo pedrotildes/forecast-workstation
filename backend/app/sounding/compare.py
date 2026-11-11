@@ -37,15 +37,23 @@ def render_skewt_multi(items: list[dict], title: str, subtitle: str) -> bytes:
         prof = it["snd"]["profile"]
         col = MODEL_COLORS.get(it["model"], "#333")
         p = prof["p"] * units.hPa
-        lab = f"{it['name']} ({it['run']:%d/%m %H}Z +{it['step']}h)"
-        skew.plot(p, prof["t"] * units.degC, color=col, lw=2.3, zorder=8, path_effects=stroke,
-                  label=lab)
+        lab = (f"{it['name']} ({it['run']:%d/%m %H}Z, {it.get('source', '')})" if it.get("obs")
+               else f"{it['name']} ({it['run']:%d/%m %H}Z +{it['step']}h)")
+        lw = 2.8 if it.get("obs") else 2.3
+        skew.plot(p, prof["t"] * units.degC, color=col, lw=lw, zorder=9 if it.get("obs") else 8,
+                  path_effects=stroke, label=lab)
         skew.plot(p, prof["td"] * units.degC, color=col, lw=1.7, ls=(0, (5, 2)), zorder=8,
                   path_effects=stroke)
         tr = it["an"].get("_parcel_traces", {}).get("ML")
         if tr is not None:
             skew.plot(p, tr * units.degC, color=col, lw=0.9, ls=":", zorder=6)
         sel = prof["p"] >= 100
+        if len(prof["p"]) > 40:          # high-resolution radiosonde: one barb every ~25 hPa
+            keep, last = np.zeros(len(prof["p"]), bool), None
+            for i, pv in enumerate(prof["p"]):
+                if last is None or last - pv >= 25:
+                    keep[i], last = True, pv
+            sel = sel & keep
         xloc = 1.03 + 0.04 * k
         skew.plot_barbs(p[sel], prof["u"][sel] * units.knot, prof["v"][sel] * units.knot,
                         xloc=xloc, length=5.2, linewidth=0.7, color=col,

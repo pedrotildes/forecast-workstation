@@ -477,6 +477,8 @@ async def archiver_loop(log=print) -> None:
             try:
                 if parse_t(ev["start"]) - dt.timedelta(hours=3) <= now <= end + 2 * H:
                     await capture_radar(ev["id"], log)
+                from .obs import capture_event_obs
+                await capture_event_obs(ev, log)
                 await archive_event(ev["id"], log)
             except Exception as e:  # noqa: BLE001
                 log(f"[archive] {ev['id']}: {e}")
@@ -523,6 +525,12 @@ async def _worker_main():
             if now > parse_t(ev["end"]) + dt.timedelta(days=6):
                 continue
             t = time.time()
+            try:
+                from .obs import capture_event_obs
+                n = await capture_event_obs(ev, log)
+                log(f"radiossondas {ev['id']}: {n} arquivadas")
+            except Exception as e:  # noqa: BLE001
+                log(f"radiossondas {ev['id']}: erro {e}")
             st = await archive_event(ev["id"], log)
             log(f"campos {ev['id']}: " + ", ".join(
                 f"{k} {v['done']}/{v['total']} ({v['fields']} campos, {v['bytes'] / 1e6:.0f} MB, "

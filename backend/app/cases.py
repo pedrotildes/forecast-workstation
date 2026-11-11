@@ -462,3 +462,82 @@ async def sequence_data(ev, model_id: str, every: int, region: str) -> dict:
         t += every * H
     return {"model": m.name, "source": m.source, "region": region, "event": ev["name"],
             "panels": panels}
+
+
+# ================================================================== soundings & meteogram
+async def case_sounding_items(ev, t: dt.datetime, lat: float, lon: float, sid: str | None,
+                              models: list[str]) -> list[dict]:
+    """Observed radiosonde (if any) + every model's analysis profile at time t."""
+    from . import obs
+    from .sounding.profile import get_profile
+    items = []
+    if sid:
+        prof = await obs.get_obs(sid, t)
+        if prof:
+            snd = obs.obs_as_sounding(prof)
+            items.append({"model": "obs", "name": f"Radiossonda {prof['name']}", "short": "Observada",
+                          "run": t, "step": 0, "snd": snd, "obs": True, "source": prof["source"]})
+    for mid in models:
+        m = MODELS[mid]
+        if not m.covers(lat, lon):
+            continue
+        try:
+            snd = await get_profile(m, t, 0, lat, lon)       # analysis = step 0 of the run at t
+        except FieldUnavailable:
+            continue
+        if len(snd["profile"]["p"]) < 5:
+            continue
+        items.append({"model": mid, "name": f"{m.name} (análise)", "short": m.name.replace("ECMWF ", ""),
+                      "run": t, "step": 0, "snd": snd})
+    return items
+
+
+async def case_meteogram_data(ev, model_id: str, lat: float, lon: float, name: str) -> dict:
+    """Time-height section from the 6-hourly analyses + surface panels from the chain."""
+    from . import obs
+    from .models.base import Domain
+    m = MODELS[model_id]
+    if not m.covers(lat, lon):
+        raise FieldUnavailable(m.outside_msg())
+    t0, t1 = archive.parse_t(ev["start"]), min(archive.parse_t(ev["end"]), archive._utcnow())
+    levels = [p for p in m.levels if p >= 200]
+    hum = "r" if m.has("r") else "q"
+    dom = Domain.tile(lat, lon)
+    r = t0.replace(hour=(t0.hour // 6) * 6, minute=0, second=0, microsecond=0)
+    if r < t0:
+        r += 6 * H
+    times, cols = [], []
+    while r <= t1:
+        keys = [(n, p) for p in levels for n in ("t", hum, "u", "v")] + [("sp", 0)]
+        try:
+            f = await m.fetch(r, 0, keys, dom)
+        except FieldUnavailable:
+            f = {}
+        if f and ("t", levels[0]) in f:
+            col = {(n, p): f[(n, p)].at(lat, lon) if (n, p) in f else np.nan
+                   for p in levels for n in ("t", hum, "u", "v")}
+            col["sp"] = f[("sp", 0)].at(lat, lon) / 100 if ("sp", 0) in f else np.nan
+            times.append(r)
+            cols.append(col)
+        r += 6 * H
+    prof = None
+    if times:
+        A = lambda n: np.array([[c[(n, p)] for c in cols] for p in levels])  # noqa: E731
+        prof = {"t": A("t"), "u": A("u"), "v": A("v"),
+                "r": A("r") if hum == "r" else None, "q": A("q") if hum == "q" else None,
+                "sp": np.array([c["sp"] for c in cols])}
+        if hum == "q":
+            from .products import rh_from_q
+            prof["r"] = rh_from_q(prof["t"], prof["q"], np.array(levels)[:, None])
+    chain = await point_chain(m, ev, lat, lon)
+    sid, dkm = obs.nearest_station(lat, lon)
+    obs_times = []
+    if sid:
+        for t in obs.event_obs_times(ev):
+            if obs._path(sid, t).exists():
+                obs_times.append(t)
+    return {"event": ev["name"], "model": m.name, "model_id": model_id, "source": m.source,
+            "place": name, "lat": lat, "lon": lon, "levels": levels, "times": times,
+            "profile": prof, "chain": chain,
+            "obs": {"station": obs.station_info(sid)["name"] if sid else None,
+                    "km": round(dkm), "times": obs_times}}
