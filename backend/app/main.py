@@ -22,7 +22,8 @@ from .models.base import cleanup_cache
 from .series import PROGRESS, has_profile, point_series, resolve_run
 from .workers import (compare_sounding_worker, render_map_worker, render_meteogram_worker,
                       render_case_worker, render_multi_worker, render_sounding_worker,
-                      render_thermogram_worker, render_xsection_worker)
+                      render_thermogram_worker, render_xsection_worker,
+                      render_xsection_multi_worker)
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
@@ -409,6 +410,60 @@ async def compare_sounding(models: str, valid: str, lat: float, lon: float, name
     png = await asyncio.get_running_loop().run_in_executor(
         POOL, compare_sounding_worker, items, title, subtitle)
     return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/compare/xsection.png")
+async def compare_xsection(models: str, valid: str, lat0: float, lon0: float, lat1: float, lon1: float,
+                           kind: str = "dyn", a: str = "", b: str = "", diff: bool = False):
+    """Vertical cross-section A→B of several models at the same valid time (stacked panels,
+    common colour scale; optional difference panel first − second model)."""
+    from .xsection import KINDS, section
+    _xs_check(kind, lat0, lon0, lat1, lon1)
+    v = _parse_run(valid)
+    ms = _model_list(models)
+    plan, skipped = [], []
+    for m in ms:
+        if not (m.covers(lat0, lon0) and m.covers(lat1, lon1)):
+            skipped.append(f"{m.name} (linha fora do domínio)")
+            continue
+        rs = await resolve_run(m, v)
+        if rs is None:
+            skipped.append(f"{m.name} (sem previsão para esta hora)")
+            continue
+        plan.append((m, *rs))
+    if not plan:
+        raise HTTPException(404, "nenhum modelo cobre esta linha e esta hora")
+
+    async def produce():
+        async def one(m, r, st):
+            try:
+                return m, r, st, await section(m, r, st, lat0, lon0, lat1, lon1)
+            except FieldUnavailable:
+                return m, r, st, None
+        items, miss = [], list(skipped)
+        for m, r, st, sec in await asyncio.gather(*(one(*p) for p in plan)):
+            if sec is None:
+                miss.append(f"{m.name} (sem dados)")
+                continue
+            if kind == "omega" and sec.get("w") is None:
+                miss.append(f"{m.name} (sem ω)")
+                continue
+            items.append({"model": m.id, "name": m.name.replace("ECMWF ", ""),
+                          "label": f"{m.name} — run {r:%d/%m %H}Z, +{st} h", "sec": sec})
+        if not items:
+            raise HTTPException(404, "sem dados para o corte: " + ", ".join(miss))
+        title = f"Corte vertical {a or 'A'} → {b or 'B'} — comparação de modelos"
+        sub = (f"{KINDS[kind]}   ·   Válido {fmt_time(v)}   ·   cada modelo na run mais recente que cobre esta hora"
+               + (f"   ·   sem: {', '.join(miss)}" if miss else ""))
+        meta = _xs_meta(kind, title, sub, " · ".join(dict.fromkeys(MODELS[it["model"]].source for it in items)), a, b)
+        meta["diff"] = diff
+        try:
+            return await asyncio.get_running_loop().run_in_executor(POOL, render_xsection_multi_worker, items, meta)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from None
+    key = ["cxs", valid, [(m.id, r.isoformat(), st) for m, r, st in plan], round(lat0, 3), round(lon0, 3),
+           round(lat1, 3), round(lon1, 3), kind, a, b, diff]
+    return await _cached_png(key, produce)
 
 
 @app.get("/api/compare/diff.png")

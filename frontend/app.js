@@ -27,7 +27,7 @@ const S = {
   region: "europe", preset: "sfc_precip", layers: null, catalog: null, regions: [],
   lat: 38.72, lon: -9.14, place: "Lisboa", parcel: "ML", playing: false, axes: null,
   cmp: { mode: "maps", models: ["gfs", "ecmwf", "aifs"], preset: "z500_t500", region: "europe",
-    times: [], idx: 0, a: "gfs", b: "ecmwf", v: "gh", level: 500, accum: 6, dregion: "europe",
+    times: [], idx: 0, a: "gfs", b: "ecmwf", v: "gh", level: 500, accum: 6, dregion: "europe", xdiff: false,
     axes: {} },
   cs: { eid: null, product: "track", models: ["ecmwf", "gfs", "aifs", "icon_eu"], fc: "ecmwf",
     model: "ecmwf", region: "nea", every: 12, systems: [], station: "08536", time: null, obs: null },
@@ -38,7 +38,7 @@ const S = {
     preset: "L:Madeira → Lisboa", kind: "dyn" },
   sndMode: "point", clickMode: "sounding", xsPending: null,
 };
-const XS = { fc: null, cs: null };   // LineBox instances
+const XS = { fc: null, cs: null, cmp: null };   // LineBox instances
 const frames = new Map();     // url -> {src, axes}
 let loadToken = 0;
 
@@ -87,6 +87,9 @@ function cmpUrls(i = S.cmp.idx) {
   if (c.mode === "diff")
     return ["/api/compare/diff.png?" + qs({ a: c.a, b: c.b, var: c.v, level: c.level, accum: c.accum,
       valid: t.valid, region: c.dregion })];
+  if (c.mode === "xsec")
+    return ["/api/compare/xsection.png?" + qs({ models: c.models.join(","), valid: t.valid, ...xsQuery(),
+      diff: c.xdiff && c.models.length >= 2 ? 1 : 0 })];
   return ["/api/compare/sounding.png?" + qs({ models: c.models.join(","), valid: t.valid,
     lat: S.lat, lon: S.lon, name: S.place || "" })];
 }
@@ -177,7 +180,7 @@ async function show() {
   updateTime();
   $("#error").classList.add("hidden");
   if (!urls.length) return;
-  const slow = S.tab === "meteogram" || (S.tab === "compare" && S.cmp.mode === "meteogram") ||
+  const slow = S.tab === "meteogram" || (S.tab === "compare" && ["meteogram", "xsec"].includes(S.cmp.mode)) ||
     (S.tab === "cases" && ["pressure", "sequence", "point", "meteogram"].includes(S.cs.product)) ||
     (S.tab === "extremes" && !S.x.product.startsWith("ens"));
   const job = slow ? Math.random().toString(36).slice(2) : null;
@@ -186,7 +189,7 @@ async function show() {
   if (!cached) {
     $("#loader").classList.remove("hidden");
     $("#loadmsg").textContent = { maps: "A gerar mapa…", sounding: S.sndMode === "xsec" ? "A calcular o corte vertical…" : "A calcular sondagem…",
-      meteogram: "A preparar meteograma…", compare: "A comparar modelos…",
+      meteogram: "A preparar meteograma…", compare: S.cmp.mode === "xsec" ? "A calcular os cortes de cada modelo…" : "A comparar modelos…",
       extremes: "A calcular Tmáx/Tmín diárias…", cases: "A analisar o caso a partir do arquivo…" }[S.tab];
     if (job) stopWatch = watchProgress(job, token);
   }
@@ -572,8 +575,16 @@ function renderCmpModels() {
     const sel = $$("#cmp-models input").filter((x) => x.checked).map((x) => x.value);
     if (!sel.length) { cb.checked = true; return; }
     S.cmp.models = sel;
+    xdiffNote();
     await loadCompareTimes(); show();
   });
+}
+function xdiffNote() {
+  const c = S.cmp, el = $("#cmp-xdiff-note");
+  if (!c.xdiff) { el.textContent = ""; return; }
+  el.textContent = c.models.length >= 2
+    ? `Diferença ${modelName(c.models[0])} − ${modelName(c.models[1])} (os dois primeiros modelos assinalados).`
+    : "Assinale pelo menos dois modelos para ver a diferença.";
 }
 async function setCmpMode(mode) {
   S.cmp.mode = mode;
@@ -585,6 +596,7 @@ async function setCmpMode(mode) {
     const want = [S.cmp.a, S.cmp.b];
     if (S.cmp.models.join() !== want.join()) { S.cmp.models = want; renderCmpModels(); await loadCompareTimes(); }
   }
+  if (mode === "xsec") { XS.cmp.refresh(); xdiffNote(); }
   buildTicks(); show();
 }
 async function initDiffControls() {
@@ -878,7 +890,9 @@ function caseXtime(t) {
 function initXs() {
   XS.fc = new LineBox($("#xs-line-fc"), S.xs, () => show());
   XS.cs = new LineBox($("#xs-line-case"), S.xs, () => show(), caseXsPresets);
-  xsKinds($("#xs-kinds-fc")); xsKinds($("#xs-kinds-case"));
+  XS.cmp = new LineBox($("#xs-line-cmp"), S.xs, () => show());
+  xsKinds($("#xs-kinds-fc")); xsKinds($("#xs-kinds-case")); xsKinds($("#xs-kinds-cmp"));
+  $("#cmp-xdiff").onchange = (e) => { S.cmp.xdiff = e.target.checked; xdiffNote(); show(); };
   $$("#snd-mode button").forEach((b) => b.onclick = () => { S.sndMode = b.dataset.m; applySndMode(); show(); });
   $$("#click-mode button").forEach((b) => b.onclick = () => {
     S.clickMode = b.dataset.m; S.xsPending = null; $("#crosshair").classList.add("hidden");

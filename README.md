@@ -77,6 +77,8 @@ frontend/      index.html + app.js + xsect.js + live.js + style.css (sem build)
 - `GET /api/compare/meteogram.png?models&lat&lon&hours` — meteograma multimodelo
 - `GET /api/compare/sounding.png?models&valid=AAAAMMDDHH&lat&lon` — Skew-T sobreposto
 - `GET /api/compare/diff.png?a&b&var&level&valid&region[&accum]` — mapa de diferenças A − B
+- `GET /api/compare/xsection.png?models&valid&lat0&lon0&lat1&lon1&kind[&diff=1]` — cortes verticais
+  de vários modelos à mesma hora (painéis empilhados; opcionalmente diferença 1.º − 2.º modelo)
 - `GET /api/progress?job=…` — progresso de descargas longas (meteogramas)
 - `GET /api/extremes/point.png?lat&lon&name` — termograma de vagas de calor/frio
 - `GET /api/extremes/map.png?kind=heat|cold|tmax_anom|tmin_anom&model&region&d0&d1`
@@ -99,6 +101,11 @@ até 100 hPa (GFS 21, ICON-EU 18, ECMWF/AIFS 12) e a barra de tempo percorre os 
 | Movimento vertical | ω (Pa/s; subida a vermelho) | θ, HR 90 % |
 | Vorticidade potencial | PV de Ertel isobárica (PVU) | θ, isotácas ≥ 60 kt, 2 PVU |
 | Temperatura | T (°C) + barbelas | 0 °C, HR 90 % |
+
+Em **Comparar → Corte vertical**, a mesma linha é cortada em cada modelo assinalado à mesma hora
+válida (cada um na run mais recente que a cobre), em painéis empilhados com a mesma escala de cores e
+um só mapa de localização; opcionalmente, um painel com a diferença entre os dois primeiros modelos
+(campo sombreado do tipo de corte, nos níveis comuns aos dois).
 
 A PV é calculada na grelha (campos suavizados a ~25 km), com todos os termos da forma isobárica
 (vorticidade absoluta × ∂θ/∂p e termos baroclínicos); no ICON-EU o ω é suavizado a ~0,2°. Cada

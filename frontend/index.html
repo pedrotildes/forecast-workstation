@@ -142,6 +142,7 @@
         <button data-m="diff">Diferença</button>
         <button data-m="sounding">Sondagem</button>
         <button data-m="meteogram">Meteograma</button>
+        <button data-m="xsec">Corte vertical</button>
       </div>
       <h3>Modelos</h3>
       <div id="cmp-models" class="checks"></div>
@@ -162,6 +163,16 @@
       <h3>Domínio</h3>
       <select id="diff-region" class="region-select"></select>
       <button id="diff-go" class="primary">Calcular diferença</button>
+    </section>
+    <section class="cmp-only" data-modes="xsec">
+      <h3>Linha do corte</h3>
+      <div class="line-box" id="xs-line-cmp"></div>
+      <h3>Tipo de corte</h3>
+      <div class="preset-list xs-kinds" id="xs-kinds-cmp"></div>
+      <label class="check"><input type="checkbox" id="cmp-xdiff"> Painel de diferença entre dois modelos</label>
+      <p class="hint" id="cmp-xdiff-note"></p>
+      <p class="hint">Um painel por modelo, todos com a mesma escala, na run mais recente de cada um que
+      cobre a hora escolhida na barra de tempo.</p>
     </section>
     <section class="cmp-only" data-modes="sounding meteogram">
       <h3>Local</h3>

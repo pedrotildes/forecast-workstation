@@ -250,36 +250,100 @@ def _ll(lat, lon):
     return f"{abs(lat):.1f}°{'N' if lat >= 0 else 'S'} {abs(lon):.1f}°{'E' if lon >= 0 else 'W'}"
 
 
-def render(sec: dict, meta: dict) -> bytes:
-    """meta: kind, title, subtitle, source, a_name, b_name"""
-    import io
-    import warnings
+# field shaded by each kind (used for the model-difference panel): key, levels, label
+DIFF = {
+    "dyn": ("spd", [-40, -30, -20, -15, -10, -5, 5, 10, 15, 20, 30, 40], "velocidade do vento (kt)"),
+    "normal": ("un", [-40, -30, -20, -15, -10, -5, 5, 10, 15, 20, 30, 40], "vento normal ao corte (kt)"),
+    "moist": ("rh", [-60, -40, -30, -20, -10, 10, 20, 30, 40, 60], "humidade relativa (%)"),
+    "omega": ("w", [-2, -1.5, -1, -0.6, -0.3, 0.3, 0.6, 1, 1.5, 2], "ω (Pa/s)"),
+    "pv": ("pv", [-4, -2, -1, -0.5, -0.25, 0.25, 0.5, 1, 2, 4], "vorticidade potencial (PVU)"),
+    "temp": ("t", [-8, -6, -4, -3, -2, -1, 1, 2, 3, 4, 6, 8], "temperatura (°C)"),
+}
 
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib
-    matplotlib.use("Agg")
-    from matplotlib import patheffects as pe
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.colors import BoundaryNorm, ListedColormap
-    from matplotlib.figure import Figure
-    from matplotlib.ticker import FixedLocator, FuncFormatter, NullFormatter, NullLocator
 
-    from .maps.styles import THETAE_COLORS, THETAE_LEVELS, WIND_COLORS, WIND_LEVELS, _interp, temp_fill
+def diff_section(s1: dict, s2: dict, kind: str) -> dict | None:
+    """s1 − s2 of the kind's shaded field on common pressure levels and 200 points along A→B."""
+    key = DIFF[kind][0]
+    if s1.get(key) is None or s2.get(key) is None:
+        return None
+    p1, p2 = np.asarray(s1["p"], float), np.asarray(s2["p"], float)
+    P = np.array(sorted(set(p1.tolist()) & set(p2.tolist()), reverse=True))
+    if len(P) < 4:
+        return None
+    L = float(min(s1["dist"][-1], s2["dist"][-1]))
+    X = np.linspace(0, L, 200)
 
-    warnings.filterwarnings("ignore")
-    kind = meta["kind"]
-    P, X = np.asarray(sec["p"], float), np.asarray(sec["dist"], float)
-    top = max(TOP[kind], float(P.min()))
-    sp = sec.get("sp")
+    def on(s, f):
+        x = np.asarray(s["dist"], float)
+        pp = np.asarray(s["p"], float).tolist()
+        return np.stack([np.interp(X, x, np.asarray(f[pp.index(p)], float)) for p in P])
+
+    d = on(s1, s1[key]) - on(s2, s2[key])
+    sp = None
+    if s1.get("sp") is not None:
+        sp = np.interp(X, np.asarray(s1["dist"], float), np.nan_to_num(np.asarray(s1["sp"], float), nan=1013.0))
+    return {"p": P, "dist": X, "d": d, "th": on(s1, s1["th"]), "sp": sp}
+
+
+def _vrange(secs, kind):
+    top = max([TOP[kind]] + [float(np.min(s["p"])) for s in secs])
     bottom = 1000.0
-    if sp is not None and np.isfinite(sp).any():
-        bottom = float(np.clip(np.nanmax(sp) + 8, 1000, 1050))
+    for s in secs:
+        sp = s.get("sp")
+        if sp is not None and np.isfinite(sp).any():
+            bottom = max(bottom, float(np.clip(np.nanmax(sp) + 8, 1000, 1050)))
+    return top, bottom
 
-    fig = Figure(figsize=(14.5, 7.9), dpi=110, facecolor="white")
-    FigureCanvasAgg(fig)
-    ax = fig.add_axes([0.055, 0.17, 0.635, 0.68])
-    cax = fig.add_axes([0.055, 0.065, 0.635, 0.022])
+
+def _pressure_axes(ax, X, top, bottom, sp, xlabels=None, height_label=True):
+    from matplotlib.ticker import FixedLocator, FuncFormatter, NullFormatter, NullLocator
+    if sp is not None and np.isfinite(sp).any():
+        ax.fill_between(X, np.nan_to_num(sp, nan=1013.0), 1100, color="#6d4c41", zorder=7, lw=0)
+    ax.set_yscale("log")
+    ax.set_ylim(bottom, top)
+    ax.set_xlim(X[0], X[-1])
+    yt = [p for p in (1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100) if top <= p <= bottom]
+    ax.set_yticks(yt)
+    ax.set_yticklabels([str(p) for p in yt], fontsize=8)
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.set_ylabel("Pressão (hPa)", fontsize=8.5)
+    ax.grid(True, axis="y", color="#000", alpha=0.08, lw=0.6)
+    sec_ax = ax.secondary_yaxis("right", functions=(
+        lambda p: 44.3308 * (1 - (np.clip(p, 1, None) / 1013.25) ** 0.190263),
+        lambda z: 1013.25 * (1 - np.clip(z, None, 44.3) / 44.3308) ** (1 / 0.190263)))
+    sec_ax.yaxis.set_major_locator(FixedLocator([0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16]))
+    sec_ax.yaxis.set_major_formatter(FuncFormatter(lambda z, _: f"{z:.0f}"))
+    sec_ax.yaxis.set_minor_locator(NullLocator())
+    sec_ax.tick_params(labelsize=7.5)
+    if height_label:
+        sec_ax.set_ylabel("Altitude na atmosfera padrão (km)", fontsize=8)
+    if xlabels is not None:
+        ticks, labels = xlabels
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels, fontsize=7.8)
+
+
+def _xlabels(sec, with_coords=True):
+    lat, lon = sec["lat"], sec["lon"]
+    idx = np.linspace(0, len(lat) - 1, 5).round().astype(int)
+    xs = np.asarray(sec["dist"], float)[idx]
+    labels = [f"{xs[k]:.0f} km\n{_ll(lat[i], lon[i])}" if with_coords else "" for k, i in enumerate(idx)]
+    return xs, labels
+
+
+def _letters(ax, size=15):
+    from matplotlib import patheffects as pe
+    for x, s, ha in ((0.006, "A", "left"), (0.994, "B", "right")):
+        ax.text(x, 0.985, s, transform=ax.transAxes, ha=ha, va="top", fontsize=size, fontweight="bold",
+                color="#0d1b2a", zorder=9, path_effects=[pe.withStroke(linewidth=3, foreground="white")])
+
+
+def _draw_section(fig, ax, cax, sec, kind, top, bottom) -> list[str]:
+    """Shading (+ colour bar in cax, if given), isolines and barbs of one section."""
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
+    from .maps.styles import WIND_COLORS, WIND_LEVELS, _interp, temp_fill
+    P, X = np.asarray(sec["p"], float), np.asarray(sec["dist"], float)
 
     def shade(data, levels, colors, extend="both", label="", under=None, over=None, ticks=None):
         cmap = ListedColormap(colors)
@@ -289,9 +353,10 @@ def render(sec: dict, meta: dict) -> bytes:
             cmap.set_over(over)
         norm = BoundaryNorm(levels, cmap.N, extend="neither")
         cf = ax.contourf(X, P, data, levels=levels, cmap=cmap, norm=norm, extend=extend, zorder=1)
-        cb = fig.colorbar(cf, cax=cax, orientation="horizontal", ticks=ticks or levels)
-        cb.ax.tick_params(labelsize=7.5)
-        cb.set_label(label, fontsize=8.5)
+        if cax is not None:
+            cb = fig.colorbar(cf, cax=cax, orientation="horizontal", ticks=ticks or levels)
+            cb.ax.tick_params(labelsize=7.5)
+            cb.set_label(label, fontsize=8.5)
         return cf
 
     def lines(data, levels, color, lw=0.8, fmt="%d", ls="solid", every=1, z=3, labels=True):
@@ -382,50 +447,53 @@ def render(sec: dict, meta: dict) -> bytes:
 
     # wind barbs (map-like: north up)
     if kind in ("dyn", "moist", "omega", "temp"):
-        ncol = 22
-        cols_i = np.unique(np.linspace(0, len(X) - 1, ncol).round().astype(int))
+        cols_i = np.unique(np.linspace(0, len(X) - 1, 22).round().astype(int))
         lev_i = [i for i, p in enumerate(P) if p >= top and (len(P) <= 14 or p in
                  (1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100))]
         XX, PP = np.meshgrid(X[cols_i], P[lev_i])
         ax.barbs(XX, PP, sec["u"][np.ix_(lev_i, cols_i)], sec["v"][np.ix_(lev_i, cols_i)],
                  length=5.0, linewidth=0.45, color="#111", zorder=6, sizes={"emptybarb": 0.04})
+    return legend
 
-    # ground
-    if sp is not None and np.isfinite(sp).any():
-        ax.fill_between(X, np.nan_to_num(sp, nan=1013.0), 1100, color="#6d4c41", zorder=7, lw=0)
-    ax.set_yscale("log")
-    ax.set_ylim(bottom, top)
-    ax.set_xlim(X[0], X[-1])
-    yt = [p for p in (1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100) if top <= p <= bottom]
-    ax.set_yticks(yt)
-    ax.set_yticklabels([str(p) for p in yt], fontsize=8)
-    ax.yaxis.set_minor_formatter(NullFormatter())
-    ax.set_ylabel("Pressão (hPa)", fontsize=8.5)
-    ax.grid(True, axis="y", color="#000", alpha=0.08, lw=0.6)
-    sec_ax = ax.secondary_yaxis("right", functions=(
-        lambda p: 44.3308 * (1 - (np.clip(p, 1, None) / 1013.25) ** 0.190263),
-        lambda z: 1013.25 * (1 - np.clip(z, None, 44.3) / 44.3308) ** (1 / 0.190263)))
-    sec_ax.yaxis.set_major_locator(FixedLocator([0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16]))
-    sec_ax.yaxis.set_major_formatter(FuncFormatter(lambda z, _: f"{z:.0f}"))
-    sec_ax.yaxis.set_minor_locator(NullLocator())
-    sec_ax.tick_params(labelsize=7.5)
-    sec_ax.set_ylabel("Altitude na atmosfera padrão (km)", fontsize=8)
-    # x: distance + coordinates
-    lat, lon = sec["lat"], sec["lon"]
-    idx = np.linspace(0, len(X) - 1, 5).round().astype(int)
-    ax.set_xticks(X[idx])
-    ax.set_xticklabels([f"{X[i]:.0f} km\n{_ll(lat[i], lon[i])}" for i in idx], fontsize=7.8)
-    for x, s, ha in ((0.006, "A", "left"), (0.994, "B", "right")):
-        ax.text(x, 0.985, s, transform=ax.transAxes, ha=ha, va="top", fontsize=15, fontweight="bold",
-                color="#0d1b2a", zorder=9, path_effects=[pe.withStroke(linewidth=3, foreground="white")])
 
-    # ---- inset map
-    ins = sec["inset"]
+def _draw_diff(fig, ax, cax, d, kind, name1, name2):
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
+    from .maps.styles import _interp
+    key, lv, what = DIFF[kind]
+    n = len(lv) // 2
+    cols = _interp(["#08306b", "#2171b5", "#6baed6", "#c6dbef"], n - 1) + ["#ffffff"] + \
+        _interp(["#fcbba1", "#fb6a4a", "#cb181d", "#67000d"], n - 1)
+    cmap = ListedColormap(cols)
+    cmap.set_under("#041a40")
+    cmap.set_over("#3b0007")
+    X, P = d["dist"], d["p"]
+    cf = ax.contourf(X, P, d["d"], levels=lv, cmap=cmap, norm=BoundaryNorm(lv, cmap.N), extend="both", zorder=1)
+    th = d["th"]
+    lvl = [x for x in range(240, 500, 8) if np.nanmin(th) <= x <= np.nanmax(th)]
+    if lvl:
+        cs = ax.contour(X, P, th, levels=lvl, colors="#4b5563", linewidths=0.5, zorder=3)
+        ax.clabel(cs, fmt="%d", fontsize=6.3, inline_spacing=2)
+    cb = fig.colorbar(cf, cax=cax, orientation="vertical", ticks=lv)
+    cb.ax.tick_params(labelsize=7)
+    return [f"{name1} − {name2}:", f"  {what}", f"  vermelho = {name1} maior", f"  azul = {name2} maior",
+            f"  linhas: θ do {name1} (K)"]
+
+
+def _draw_inset(fig, rect, sec, kind) -> str:
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    from matplotlib import patheffects as pe
+    from matplotlib.colors import ListedColormap
+
+    from .maps.styles import THETAE_COLORS, THETAE_LEVELS, _interp
+    ins, lat, lon = sec["inset"], sec["lat"], sec["lon"]
+    idx = np.linspace(0, len(lat) - 1, 5).round().astype(int)
     mid = len(lat) // 2
     proj = ccrs.LambertConformal(central_longitude=float(lon[mid]), central_latitude=float(lat[mid]),
                                  standard_parallels=(float(lat[mid]) - 5, float(lat[mid]) + 5))
     PC = ccrs.PlateCarree()
-    mx = fig.add_axes([0.725, 0.37, 0.26, 0.48], projection=proj)
+    mx = fig.add_axes(rect, projection=proj)
     ilats, ilons = np.asarray(ins["lats"], float), np.asarray(ins["lons"], float)
     lo0 = max(ilons.min(), min(ilons.min() + 1.0, float(lon.min()) - 1.0))
     lo1 = min(ilons.max(), max(ilons.max() - 1.0, float(lon.max()) + 1.0))
@@ -439,11 +507,11 @@ def render(sec: dict, meta: dict) -> bytes:
         mx.contourf(ilons, ilats, ins["jet"], levels=jl, transform=PC, zorder=1, alpha=0.75,
                     cmap=ListedColormap(_interp(["#bfdbfe", "#60a5fa", "#7c3aed", "#c026d3"], len(jl) - 1)),
                     extend="max")
-        inset_lbl = f"Mapa: vento ≥ 60 kt a {ins['jet_p']} hPa e pressão ao nível do mar"
+        lbl = f"Mapa: vento ≥ 60 kt a {ins['jet_p']} hPa e pressão ao nível do mar"
     else:
         mx.contourf(ilons, ilats, ins["the850"], levels=THETAE_LEVELS, colors=THETAE_COLORS,
                     transform=PC, zorder=1, alpha=0.7, extend="both")
-        inset_lbl = f"Mapa: θe a {ins['the_p']} hPa e pressão ao nível do mar"
+        lbl = f"Mapa: θe a {ins['the_p']} hPa e pressão ao nível do mar"
     mx.coastlines("50m", lw=0.6, color="#333", zorder=2)
     mx.add_feature(cfeature.BORDERS.with_scale("50m"), lw=0.4, edgecolor="#555", zorder=2)
     if ins["msl"] is not None:
@@ -457,21 +525,115 @@ def render(sec: dict, meta: dict) -> bytes:
         mx.text(float(lon[i]), float(lat[i]), s, transform=PC, fontsize=12, fontweight="bold",
                 ha="center", va="center", zorder=7, color="#0d1b2a",
                 path_effects=[pe.withStroke(linewidth=3, foreground="white")])
-    fig.text(0.725, 0.345, inset_lbl, fontsize=7.5, color="#333", va="top")
+    return lbl
 
-    # ---- legend / info block
-    y = 0.30
-    info = [f"A: {meta.get('a_name') or _ll(lat[0], lon[0])}",
+
+def _figure(w_in, h_in):
+    import warnings
+
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    warnings.filterwarnings("ignore")
+    fig = Figure(figsize=(w_in, h_in), dpi=110, facecolor="white")
+    FigureCanvasAgg(fig)
+    return fig
+
+
+def _png(fig) -> bytes:
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=110, facecolor="white")
+    return buf.getvalue()
+
+
+def _info(sec, meta, legend):
+    lat, lon = sec["lat"], sec["lon"]
+    return [f"A: {meta.get('a_name') or _ll(lat[0], lon[0])}",
             f"B: {meta.get('b_name') or _ll(lat[-1], lon[-1])}",
             f"Comprimento: {sec['length']:.0f} km (círculo máximo)", ""] + legend
-    for s in info:
+
+
+def render(sec: dict, meta: dict) -> bytes:
+    """One section. meta: kind, title, subtitle, source, a_name, b_name"""
+    kind = meta["kind"]
+    top, bottom = _vrange([sec], kind)
+    fig = _figure(14.5, 7.9)
+    ax = fig.add_axes([0.055, 0.17, 0.635, 0.68])
+    cax = fig.add_axes([0.055, 0.065, 0.635, 0.022])
+    legend = _draw_section(fig, ax, cax, sec, kind, top, bottom)
+    _pressure_axes(ax, np.asarray(sec["dist"], float), top, bottom, sec.get("sp"), _xlabels(sec))
+    _letters(ax)
+    lbl = _draw_inset(fig, [0.725, 0.37, 0.26, 0.48], sec, kind)
+    fig.text(0.725, 0.345, lbl, fontsize=7.5, color="#333", va="top")
+    y = 0.30
+    for s in _info(sec, meta, legend):
         fig.text(0.725, y, s, fontsize=8, color="#1b263b", va="top")
         y -= 0.027
-
     fig.text(0.055, 0.965, meta["title"], fontsize=13, fontweight="bold", color="#0d1b2a", va="top")
     fig.text(0.055, 0.925, meta["subtitle"], fontsize=9, color="#1b263b", va="top")
     fig.text(0.985, 0.012, f"Dados: {meta['source']} · Forecast Workstation", fontsize=7, color="#666",
              ha="right")
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=110, facecolor="white")
-    return buf.getvalue()
+    return _png(fig)
+
+
+def render_multi(items: list[dict], meta: dict) -> bytes:
+    """Several models stacked with a common colour scale and one location map.
+    items: [{model, name, label, sec}]; meta: kind, title, subtitle, source, a_name, b_name, diff"""
+    from .meteogram import MODEL_COLORS
+    kind = meta["kind"]
+    secs = [it["sec"] for it in items]
+    top, bottom = _vrange(secs, kind)
+    d = diff_section(secs[0], secs[1], kind) if meta.get("diff") and len(secs) >= 2 else None
+    if len(items) == 1 and d is None:
+        return render(secs[0], {**meta, "subtitle": f"{items[0]['label']}   ·   {meta['subtitle']}"})
+    n = len(items) + (1 if d is not None else 0)
+    W, head, ph, gap, foot = 14.5, 1.05, 2.6, 0.36, 1.25
+    H = head + n * ph + (n - 1) * gap + foot
+    fig = _figure(W, H)
+    fx, fw = 0.055, 0.635
+    rect = lambda k: [fx, (H - head - k * (ph + gap) - ph) / H, fw, ph / H]  # noqa: E731
+    cax = fig.add_axes([fx, 0.40 / H, fw, 0.2 / H])
+    legend = []
+    for k, it in enumerate(items):
+        ax = fig.add_axes(rect(k))
+        lg = _draw_section(fig, ax, cax if k == 0 else None, it["sec"], kind, top, bottom)
+        legend = legend or lg
+        last = k == n - 1
+        _pressure_axes(ax, np.asarray(it["sec"]["dist"], float), top, bottom, it["sec"].get("sp"),
+                       _xlabels(it["sec"], with_coords=last), height_label=False)
+        _letters(ax, 12)
+        ax.text(0.0, 1.025, it["label"], transform=ax.transAxes, va="bottom", ha="left", fontsize=10,
+                fontweight="bold", color=MODEL_COLORS.get(it["model"], "#111"))
+    if d is not None:
+        r = rect(n - 1)
+        ax = fig.add_axes(r)
+        dcax = fig.add_axes([0.745, r[1], 0.011, ph / H])
+        dl = _draw_diff(fig, ax, dcax, d, kind, items[0]["name"], items[1]["name"])
+        _pressure_axes(ax, d["dist"], top, bottom, d["sp"], _xlabels(secs[0]), height_label=False)
+        _letters(ax, 12)
+        ax.text(0.0, 1.025, f"Diferença {items[0]['name']} − {items[1]['name']}", transform=ax.transAxes,
+                va="bottom", ha="left", fontsize=10, fontweight="bold", color="#111")
+        y = r[1] + ph / H - 0.05 / H
+        for s in dl:
+            fig.text(0.80, y, s, fontsize=8, color="#1b263b", va="top")
+            y -= 0.24 / H
+        cax.set_xlabel(cax.get_xlabel() + " — painéis dos modelos", fontsize=8.5)
+    # right column (above the difference panel): location map + information
+    info = _info(secs[0], meta, legend) + ["Altitude (eixo direito): atmosfera padrão, km"]
+    avail = n * ph + (n - 1) * gap - ((ph + gap) if d is not None else 0)
+    map_h = max(1.8, min(3.9, avail - 0.55 - 0.24 * len(info)))
+    top_f = (H - head) / H
+    lbl = _draw_inset(fig, [0.735, top_f - map_h / H, 0.25, map_h / H], secs[0], kind)
+    y = top_f - (map_h + 0.12) / H
+    fig.text(0.735, y, lbl + f" ({items[0]['name']})", fontsize=7.5, color="#333", va="top")
+    y -= 0.36 / H
+    for s in info:
+        fig.text(0.735, y, s, fontsize=8, color="#1b263b", va="top")
+        y -= 0.24 / H
+    fig.text(fx, 1 - 0.25 / H, meta["title"], fontsize=13, fontweight="bold", color="#0d1b2a", va="top")
+    fig.text(fx, 1 - 0.6 / H, meta["subtitle"], fontsize=9, color="#1b263b", va="top")
+    fig.text(0.985, 0.08 / H, f"Dados: {meta['source']} · Forecast Workstation", fontsize=7, color="#666",
+             ha="right")
+    return _png(fig)

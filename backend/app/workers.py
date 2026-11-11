@@ -57,3 +57,8 @@ def render_case_worker(kind: str, data: dict):
 def render_xsection_worker(sec: dict, meta: dict):
     from .xsection import render
     return render(sec, meta)
+
+
+def render_xsection_multi_worker(items: list, meta: dict):
+    from .xsection import render_multi
+    return render_multi(items, meta)
