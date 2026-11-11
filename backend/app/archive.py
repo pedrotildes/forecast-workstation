@@ -495,9 +495,20 @@ def other_worker_running() -> bool:
     try:
         pid = int(PID_FILE.read_text())
         os.kill(pid, 0)
-        return pid != os.getpid()
     except (OSError, ValueError):
         return False
+    if pid == os.getpid():
+        return False
+    if os.name == "posix":
+        # after a reboot the PID in the file may belong to an unrelated process
+        import subprocess
+        try:
+            cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True,
+                                 text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return True
+        return "app.archive" in cmd
+    return True
 
 
 async def _worker_main():
