@@ -39,3 +39,9 @@ def compare_sounding_worker(items: list[dict], title: str, subtitle: str):
 def render_thermogram_worker(data: dict, place: str):
     from .thermogram import render_thermogram
     return render_thermogram(data, place)
+
+
+def render_case_worker(kind: str, data: dict):
+    from . import cases_render
+    return {"pressure": cases_render.render_pressure, "sequence": cases_render.render_sequence,
+            "point": cases_render.render_point}[kind](data)

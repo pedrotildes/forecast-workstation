@@ -112,8 +112,10 @@ def _draw_fill(ax, lats, lons, arr, fill: Fill, opacity=1.0):
         extend = "max" if fill.extend in ("max", "both") else "neither"
         if np.ma.count(data) == 0:  # nothing to draw, keep the colour bar
             return cmap, norm, extend
+    # passing alpha=1 would override the palette's own transparent colours (drawn white)
+    kw = {"alpha": opacity} if opacity < 1 else {}
     ax.contourf(lons, lats, data, levels=fill.levels, cmap=cmap, norm=norm, extend=extend,
-                transform=PC, zorder=1, alpha=opacity, antialiased=True)
+                transform=PC, zorder=1, antialiased=True, **kw)
     return cmap, norm, extend
 
 
@@ -206,6 +208,25 @@ def _draw_values(ax, lats, lons, arr, region, fmt):
                     zorder=9, path_effects=stroke, clip_on=True)
 
 
+def _draw_track(ax, ly):
+    """Cyclone track: [(lon, lat, label or None), ...] drawn as a line with markers."""
+    pts = ly["points"]
+    if not pts:
+        return
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    stroke = [pe.withStroke(linewidth=ly.get("lw", 2.2) + 2.2, foreground="white")]
+    ax.plot(xs, ys, transform=PC, color=ly.get("color", "#111"), lw=ly.get("lw", 2.2),
+            ls=ly.get("ls", "-"), marker=ly.get("marker", "o"), ms=ly.get("ms", 4),
+            mec="white", mew=0.6, zorder=11, label=ly.get("label"), path_effects=stroke,
+            alpha=ly.get("alpha", 1.0))
+    txt = [pe.withStroke(linewidth=2.6, foreground="white")]
+    for x, y, lab in pts:
+        if lab:
+            ax.text(x, y, " " + lab, transform=PC, fontsize=7.2, fontweight="bold",
+                    color=ly.get("color", "#111"), va="center", zorder=12, path_effects=txt,
+                    clip_on=True)
+
+
 def _features(ax, region):
     ax.set_facecolor(OCEAN)
     ax.add_geometries(_land_geoms(region.id), crs=PC, facecolor=LAND, edgecolor="none", zorder=0)
@@ -288,6 +309,11 @@ def render_job(job: dict) -> tuple[bytes, list[float]]:
             _draw_values(ax, lats, lons, ly["data"], region, ly.get("fmt", "%.0f"))
 
     _overlay_features(ax, region)
+    tracks = [ly for ly in job["layers"] if ly["type"] == "track"]
+    for ly in tracks:
+        _draw_track(ax, ly)
+    if tracks:
+        ax.legend(loc="lower left", fontsize=8, framealpha=0.9).set_zorder(20)
     for sp in ax.spines.values():
         sp.set_linewidth(1.0)
 

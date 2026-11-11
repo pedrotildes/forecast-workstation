@@ -21,11 +21,12 @@ from .regions import REGIONS
 from .models.base import cleanup_cache
 from .series import PROGRESS, has_profile, point_series, resolve_run
 from .workers import (compare_sounding_worker, render_map_worker, render_meteogram_worker,
-                      render_multi_worker, render_sounding_worker, render_thermogram_worker)
+                      render_case_worker, render_multi_worker, render_sounding_worker,
+                      render_thermogram_worker)
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "10"
+RENDER_VERSION = "13"
 
 
 @app.on_event("startup")
@@ -550,6 +551,135 @@ async def archive_radar_tile(t: int, z: int, x: int, y: int):
     if not p.exists():
         raise HTTPException(404, "sem mosaico")
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+# ---------------------------------------------------------------- case studies
+def _case_event(eid: str) -> dict:
+    from . import archive
+    ev = archive.get_event(eid)
+    if ev is None:
+        raise HTTPException(404, "evento desconhecido")
+    return ev
+
+
+def _case_key(ev, *parts):
+    # images are cached until the archive changes (event "updated" stamp)
+    return ["case", ev["id"], ev.get("updated"), ev.get("systems"), *parts]
+
+
+@app.get("/api/cases/{eid}/systems")
+async def case_systems(eid: str):
+    from .cases import systems
+    return systems(_case_event(eid))
+
+
+@app.put("/api/cases/{eid}/systems")
+async def case_systems_set(eid: str, body: list[dict]):
+    from . import archive
+    _case_event(eid)
+    clean = []
+    for s in body:
+        try:
+            clean.append({"name": str(s["name"]).strip()[:40], "lat": float(s["lat"]),
+                          "lon": float(s["lon"]), "time": archive.parse_t(s["time"]).isoformat()})
+        except (KeyError, ValueError, TypeError):
+            raise HTTPException(400, "sistema inválido (nome, lat, lon, hora UTC)") from None
+    archive.update_event(eid, systems=clean)
+    return clean
+
+
+@app.get("/api/cases/{eid}/tracks.json")
+async def case_tracks(eid: str, models: str = "gfs,ecmwf,aifs,icon_eu"):
+    from .cases import all_tracks
+    ev = _case_event(eid)
+    return _clean(await all_tracks(ev, [m for m in models.split(",") if m in MODELS]))
+
+
+@app.get("/api/cases/{eid}/track.png")
+async def case_track_png(eid: str, models: str = "gfs,ecmwf,aifs,icon_eu", fc: str = "",
+                         region: str = "nea"):
+    from .cases import build_track_job
+    ev = _case_event(eid)
+    ms = [m for m in models.split(",") if m in MODELS] or ["ecmwf"]
+    if region not in REGIONS:
+        raise HTTPException(404, "região desconhecida")
+
+    async def build():
+        job, _ = await build_track_job(ev, ms, fc or None, region)
+        return job
+    return await _map_png_cached(_case_key(ev, "track", ms, fc, region), build)
+
+
+@app.get("/api/cases/{eid}/totals.png")
+async def case_totals_png(eid: str, model: str = "ecmwf", kind: str = "precip", region: str = "nea"):
+    from .cases import build_totals_job
+    ev = _case_event(eid)
+    if model not in MODELS or kind not in ("precip", "gust") or region not in REGIONS:
+        raise HTTPException(400, "parâmetros inválidos")
+    return await _map_png_cached(_case_key(ev, "totals", model, kind, region),
+                                 lambda: build_totals_job(ev, model, kind, region))
+
+
+@app.get("/api/cases/{eid}/pressure.png")
+async def case_pressure_png(eid: str, models: str = "gfs,ecmwf,aifs,icon_eu", fc: str = "ecmwf"):
+    from .cases import all_tracks, forecast_runs, select_forecasts
+    ev = _case_event(eid)
+    ms = [m for m in models.split(",") if m in MODELS] or ["ecmwf"]
+
+    async def produce():
+        tracks = await all_tracks(ev, ms)
+        fcs = {}
+        if fc in MODELS:
+            for name, per in tracks.items():
+                ref = per.get(fc) or next((v for v in per.values() if v), [])
+                sel = select_forecasts(await forecast_runs(MODELS[fc], ev, ref), ref)
+                fcs[name] = {r: tr for r, (tr, lead) in sel.items()}
+        data = {"event": ev["name"], "tracks": tracks, "forecasts": fcs, "fc_model": fc}
+        try:
+            return await asyncio.get_running_loop().run_in_executor(
+                POOL, render_case_worker, "pressure", data)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from None
+    return await _cached_png(_case_key(ev, "pressure", ms, fc), produce)
+
+
+@app.get("/api/cases/{eid}/sequence.png")
+async def case_sequence_png(eid: str, model: str = "ecmwf", every: int = 12, region: str = "nea"):
+    from .cases import sequence_data
+    ev = _case_event(eid)
+    if model not in MODELS or region not in REGIONS or every not in (6, 12, 24):
+        raise HTTPException(400, "parâmetros inválidos")
+
+    async def produce():
+        data = await sequence_data(ev, model, every, region)
+        if not data["panels"]:
+            raise HTTPException(404, "sem análises arquivadas para a sequência")
+        return await asyncio.get_running_loop().run_in_executor(
+            POOL, render_case_worker, "sequence", data)
+    return await _cached_png(_case_key(ev, "sequence", model, every, region), produce)
+
+
+@app.get("/api/cases/{eid}/point.png")
+async def case_point_png(eid: str, lat: float, lon: float, name: str = "",
+                         models: str = "gfs,ecmwf,aifs,icon_eu"):
+    from .cases import point_chain
+    ev = _case_event(eid)
+    _check_point(lat, lon)
+    ms = [m for m in models.split(",") if m in MODELS]
+
+    async def produce():
+        series = {}
+        for mid in ms:
+            try:
+                series[mid] = await point_chain(MODELS[mid], ev, lat, lon)
+            except FieldUnavailable:
+                continue
+        series = {k: v for k, v in series.items() if v["time"]}
+        if not series:
+            raise HTTPException(404, "sem dados arquivados neste ponto")
+        data = {"event": ev["name"], "place": name, "lat": lat, "lon": lon, "series": series}
+        return await asyncio.get_running_loop().run_in_executor(POOL, render_case_worker, "point", data)
+    return await _cached_png(_case_key(ev, "point", round(lat, 3), round(lon, 3), name, ms), produce)
 
 
 # ---------------------------------------------------------------- front-end

@@ -195,17 +195,18 @@ class ECMWF_IFS(_ECMWFBase):
     id = "ecmwf"
     name = "ECMWF IFS"
     path_model = "ifs"
-    description = "ECMWF IFS HRES (Open Data) — 0.25°, 00/12Z até +360 h, 06/18Z até +90 h"
+    description = "ECMWF IFS HRES (Open Data) — 0.25°, 00/12Z até +360 h, 06/18Z até +144 h"
     native = {"gh", "t", "r", "q", "u", "v", "w", "msl", "sp", "t2m", "d2m",
               "u10", "v10", "tp", "mucape", "pwat", "tcc", "gust", "tmax", "tmin"}
 
     def stream(self, run):
-        return "oper" if run.hour in (0, 12) else "scda"
+        # 06/18Z runs are published in the "oper" stream too (formerly "scda", to +90 h)
+        return "oper"
 
     def nominal_steps(self, run):
         if run.hour in (0, 12):
             return list(range(0, 144, 3)) + list(range(144, 361, 6))
-        return list(range(0, 91, 3))
+        return list(range(0, 145, 3))
 
 
 class ECMWF_AIFS(_ECMWFBase):

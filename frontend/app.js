@@ -28,6 +28,8 @@ const S = {
   cmp: { mode: "maps", models: ["gfs", "ecmwf", "aifs"], preset: "z500_t500", region: "europe",
     times: [], idx: 0, a: "gfs", b: "ecmwf", v: "gh", level: 500, accum: 6, dregion: "europe",
     axes: {} },
+  cs: { eid: null, product: "track", models: ["ecmwf", "gfs", "aifs", "icon_eu"], fc: "ecmwf",
+    model: "ecmwf", region: "nea", every: 12, systems: [] },
   x: { product: "point", region: "iberia", days: "1-16", sigma: "1p5", view: "sum",
     steps: [], run: null, idx: 0 },
 };
@@ -44,7 +46,7 @@ const modelName = (id) => (S.models.find((m) => m.id === id) || {}).name || id;
 const isCompareTimed = () => S.tab === "compare" && S.cmp.mode !== "meteogram";
 const isXTimed = () => S.tab === "extremes" && S.x.product.startsWith("ens") && S.x.view === "step";
 const isLive = () => S.tab === "live";
-const hasTimeline = () => ["maps", "sounding", "live"].includes(S.tab) || isCompareTimed() || isXTimed();
+const hasTimeline = () => ["maps", "sounding", "live"].includes(S.tab) || isCompareTimed() || isXTimed();  // not "cases"
 const X_MAPS = ["heat", "cold", "tmax_anom", "tmin_anom"];
 
 function mapUrl(i = S.idx) {
@@ -85,8 +87,23 @@ function xUrls(i = S.x.idx) {
   if (x.view === "step") { if (!x.steps.length) return []; q.step = x.steps[i]; }
   return ["/api/extremes/ens.png?" + qs(q)];
 }
+function caseUrl() {
+  const c = S.cs;
+  if (!c.eid || c.product === "systems") return [];
+  const ms = c.models.join(",");
+  const u = {
+    track: ["track.png", { models: ms, fc: c.fc, region: c.region }],
+    pressure: ["pressure.png", { models: ms, fc: c.fc }],
+    sequence: ["sequence.png", { model: c.model, every: c.every, region: c.region }],
+    precip: ["totals.png", { model: c.model, kind: "precip", region: c.region }],
+    gust: ["totals.png", { model: c.model, kind: "gust", region: c.region }],
+    point: ["point.png", { models: ms, lat: S.lat, lon: S.lon, name: S.place || "" }],
+  }[c.product];
+  return [`/api/cases/${c.eid}/${u[0]}?` + qs(u[1])];
+}
 function urlsAt(i) {
   if (isLive()) return [];
+  if (S.tab === "cases") return caseUrl();
   if (S.tab === "extremes") return xUrls(i);
   if (S.tab === "maps") return [mapUrl(i)];
   if (S.tab === "sounding") return [soundingUrl(i)];
@@ -142,6 +159,7 @@ async function show() {
   $("#error").classList.add("hidden");
   if (!urls.length) return;
   const slow = S.tab === "meteogram" || (S.tab === "compare" && S.cmp.mode === "meteogram") ||
+    (S.tab === "cases" && ["pressure", "sequence", "point"].includes(S.cs.product)) ||
     (S.tab === "extremes" && !S.x.product.startsWith("ens"));
   const job = slow ? Math.random().toString(36).slice(2) : null;
   const cached = urls.every((u) => frames.has(u));
@@ -150,7 +168,7 @@ async function show() {
     $("#loader").classList.remove("hidden");
     $("#loadmsg").textContent = { maps: "A gerar mapa…", sounding: "A calcular sondagem…",
       meteogram: "A preparar meteograma…", compare: "A comparar modelos…",
-      extremes: "A calcular Tmáx/Tmín diárias…" }[S.tab];
+      extremes: "A calcular Tmáx/Tmín diárias…", cases: "A analisar o caso a partir do arquivo…" }[S.tab];
     if (job) stopWatch = watchProgress(job, token);
   }
   try {
@@ -162,7 +180,8 @@ async function show() {
     if (grid) renderGrid(fs);
     else { $("#img").src = fs[0].src; S.axes = fs[0].axes; }
     $("#canvas").classList.toggle("tall", slow && !(S.tab === "extremes" && S.x.product !== "point"));
-    $("#canvas").classList.toggle("clickable", S.tab === "maps" || (S.tab === "compare" && ["maps", "diff"].includes(S.cmp.mode)) ||
+    $("#canvas").classList.toggle("clickable", S.tab === "maps" ||
+      (S.tab === "cases" && ["track", "precip", "gust"].includes(S.cs.product)) || (S.tab === "compare" && ["maps", "diff"].includes(S.cmp.mode)) ||
       (S.tab === "extremes" && S.x.product !== "point"));
     markCached();
     if (S.tab === "sounding") loadSummary();
@@ -444,6 +463,10 @@ async function pickPoint(e, axes, region) {
 }
 
 $("#img").addEventListener("click", async (e) => {
+  if (S.tab === "cases" && ["track", "precip", "gust"].includes(S.cs.product)) {
+    if (await pickPoint(e, S.axes, S.cs.region)) setCaseProduct("point");
+    return;
+  }
   if (S.tab === "extremes" && S.x.product !== "point" && await pickPoint(e, S.axes, S.x.region)) {
     setXProduct("point");
     return;
@@ -545,12 +568,13 @@ async function setTab(tab) {
   S.tab = tab;
   stop();
   $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  for (const t of ["maps", "sounding", "meteogram", "compare", "extremes", "live", "events"]) $(`#side-${t}`).classList.toggle("hidden", t !== tab);
+  for (const t of ["maps", "sounding", "meteogram", "compare", "extremes", "live", "events", "cases"]) $(`#side-${t}`).classList.toggle("hidden", t !== tab);
   $("#canvas").classList.toggle("hidden", tab === "live" || tab === "events");
   $("#ev-panel").classList.toggle("hidden", tab !== "events");
-  $("#model-bar").classList.toggle("hidden", tab === "live" || tab === "events");
+  $("#model-bar").classList.toggle("hidden", tab === "live" || tab === "events" || tab === "cases");
   $("#timeline").classList.toggle("hidden", tab === "events");
   if (tab === "events") { live.hide(); await showEvents(); return; }
+  if (tab === "cases") { live.hide(); await showCases(); return; }
   if (tab === "live") {
     status("A obter imagens de satélite…");
     try { await live.show(); status("Satélite: EUMETSAT · Radar: RainViewer", "ok"); } catch (e) { status("Erro: " + e.message, "err"); }
@@ -703,6 +727,86 @@ function initEvents() {
   };
 }
 
+// ------------------------------------------------------------------ case studies
+async function showCases() {
+  let evs = [];
+  try { evs = await api("/api/events"); } catch (e) { status("Erro: " + e.message, "err"); }
+  const sel = $("#case-event");
+  sel.innerHTML = evs.length ? evs.map((e) => `<option value="${e.id}">${esc(e.name)} · ${e.start_label.slice(4, 10)} → ${e.end_label.slice(4, 10)}</option>`).join("")
+    : `<option value="">(sem eventos — crie um no separador Eventos)</option>`;
+  if (!S.cs.eid || !evs.some((e) => e.id === S.cs.eid)) S.cs.eid = evs.length ? evs[evs.length - 1].id : null;
+  sel.value = S.cs.eid || "";
+  status(S.cs.eid ? "Análise de caso a partir do arquivo do evento" : "Sem eventos arquivados", S.cs.eid ? "ok" : "err");
+  setCaseProduct(S.cs.product);
+}
+
+function setCaseProduct(p) {
+  S.cs.product = p;
+  $$("#case-products button").forEach((b) => b.classList.toggle("on", b.dataset.p === p));
+  $$("#side-cases .case-only").forEach((el) => el.classList.toggle("hidden", !el.dataset.p.split(" ").includes(p)));
+  if (p === "systems") { loadSystems(); $("#img").classList.add("hidden"); return; }
+  $("#img").classList.remove("hidden");
+  show();
+}
+
+async function loadSystems() {
+  if (!S.cs.eid) return;
+  S.cs.systems = await api(`/api/cases/${S.cs.eid}/systems`);
+  renderSystems();
+}
+function renderSystems() {
+  const box = $("#case-systems");
+  box.innerHTML = S.cs.systems.map((s, i) => `<div class="case-sys" data-i="${i}">
+      <input class="n" value="${esc(s.name)}" placeholder="nome">
+      <input class="la" type="number" step="0.1" value="${s.lat}" title="latitude">
+      <input class="lo" type="number" step="0.1" value="${s.lon}" title="longitude">
+      <input class="t" type="datetime-local" value="${String(s.time).slice(0, 16)}" title="hora UTC">
+      <button title="remover">✕</button></div>`).join("") || `<p class="hint">Sem sistemas definidos.</p>`;
+  $$("#case-systems .case-sys button").forEach((b) => b.onclick = () => {
+    readSystems(); S.cs.systems.splice(+b.parentElement.dataset.i, 1); renderSystems();
+  });
+}
+function readSystems() {
+  S.cs.systems = $$("#case-systems .case-sys").map((r) => ({
+    name: $(".n", r).value, lat: +$(".la", r).value, lon: +$(".lo", r).value, time: $(".t", r).value }));
+}
+
+function initCases() {
+  const opts = S.models.map((m) => `<option value="${m.id}">${m.name}</option>`).join("");
+  $("#case-model").innerHTML = opts;
+  $("#case-model").value = S.cs.model;
+  $("#case-fc").innerHTML = `<option value="">— nenhuma —</option>` + opts;
+  $("#case-fc").value = S.cs.fc;
+  $("#case-models").innerHTML = S.models.map((m) => `<label class="check" style="--c:${MODEL_COLORS[m.id]}">
+    <input type="checkbox" value="${m.id}" ${S.cs.models.includes(m.id) ? "checked" : ""}><span class="sw"></span>${m.name}</label>`).join("");
+  $$("#case-models input").forEach((cb) => cb.onchange = () => {
+    const sel = $$("#case-models input").filter((x) => x.checked).map((x) => x.value);
+    if (!sel.length) { cb.checked = true; return; }
+    S.cs.models = sel; show();
+  });
+  $("#case-event").onchange = (e) => { S.cs.eid = e.target.value; setCaseProduct(S.cs.product); };
+  $$("#case-products button").forEach((b) => b.onclick = () => setCaseProduct(b.dataset.p));
+  $("#case-fc").onchange = (e) => { S.cs.fc = e.target.value; show(); };
+  $("#case-model").onchange = (e) => { S.cs.model = e.target.value; show(); };
+  $("#case-region").value = S.cs.region;
+  $("#case-region").onchange = (e) => { S.cs.region = e.target.value; show(); };
+  $("#case-every").onchange = (e) => { S.cs.every = +e.target.value; show(); };
+  $("#case-sys-add").onclick = () => {
+    readSystems();
+    S.cs.systems.push({ name: "Novo", lat: 40, lon: -15, time: new Date().toISOString().slice(0, 16) });
+    renderSystems();
+  };
+  $("#case-sys-save").onclick = async () => {
+    readSystems();
+    const r = await fetch(`/api/cases/${S.cs.eid}/systems`, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(S.cs.systems) });
+    const d = await r.json();
+    if (!r.ok) { status("Erro: " + (d.detail || r.statusText), "err"); return; }
+    S.cs.systems = d; renderSystems();
+    status("Sistemas guardados — trajetórias recalculadas", "ok");
+  };
+}
+
 // ------------------------------------------------------------------ animation
 let timer = null;
 async function tick() {
@@ -755,6 +859,7 @@ async function init() {
   initPlaces();
   initExtremes();
   initEvents();
+  initCases();
   live.init({
     onPoint: (lat, lon, tab) => {
       S.lat = lat; S.lon = lon; S.place = ""; syncPlaces();

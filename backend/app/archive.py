@@ -148,7 +148,16 @@ KEY_VARS = ["gh", "t", "u", "v", "r"]
 FULL_VARS = ["gh", "t", "u", "v", "r", "w"]
 
 
-def _keys(model, full: bool) -> list:
+LIGHT = ["msl", "tp", "gust", "u10", "v10", "t2m"]
+_RANK = {"light": 0, "key": 1, "full": 2}
+
+
+def _keys(model, full) -> list:
+    """Fields for a job kind: "full" (all levels), "key"/False (main levels) or "light"
+    (surface pressure, wind, gust, precipitation, T2m — the hourly short-range chain)."""
+    if full == "light":
+        return [(n, 0) for n in LIGHT if model.has(n)]
+    full = full in (True, "full")
     ks = [(n, 0) for n in SFC if model.has(n)]
     levels = model.levels if full else [p for p in KEY_LEVELS if p in model.levels]
     for n in (FULL_VARS if full else KEY_VARS):
@@ -169,22 +178,32 @@ def plan_event(model, ev: dict) -> list[tuple[dt.datetime, int, bool]]:
     t0, t1 = parse_t(ev["start"]), parse_t(ev["end"])
     lead = float(ev.get("lead_days", 2))
     now = _utcnow()
-    jobs: dict[tuple, bool] = {}
+    jobs: dict[tuple, str] = {}
+
+    def add(run, step, kind):
+        cur = jobs.get((run, step))
+        if cur is None or _RANK[kind] > _RANK[cur]:
+            jobs[(run, step)] = kind
+
+    # short-range chain step: hourly where the model provides it (GFS, ICON-EU)
+    chain = {"gfs": 1, "icon_eu": 1, "ecmwf": 3, "aifs": 6}.get(model.id, 3)
     run = (t0 - dt.timedelta(days=lead)).replace(minute=0, second=0, microsecond=0)
     run = run.replace(hour=(run.hour // 6) * 6)
     while run <= min(t1, now):
         if run >= t0 - 6 * H:
-            jobs[(run, 0)] = True
+            add(run, 0, "full")
             if model.id != "aifs":
-                jobs.setdefault((run, 3), False)
+                add(run, 3, "key")
+            for s in range(chain, 7, chain):           # continuous 0–6 h chain
+                add(run, s, "light")
         if run.hour in (0, 12):
             nominal = model.last_nominal_step(run) or 120
             for s in range(0, nominal + 1, 6):
                 v = run + s * H
                 if t0 - 24 * H <= v <= t1:
-                    jobs.setdefault((run, s), False)
+                    add(run, s, "key")
         run += 6 * H
-    return [(r, s, f) for (r, s), f in sorted(jobs.items())]
+    return [(r, s, k) for (r, s), k in sorted(jobs.items())]
 
 
 def _absent_file(model_id, run, step) -> Path:

@@ -109,6 +109,8 @@ campos necessários para todos os produtos:
   com todos os níveis de pressão, para sondagens; +3 h com os campos principais);
 - **previsões**: as runs 00Z/12Z desde N dias antes, de 6 em 6 h dentro da janela
   (superfície + 850/700/500/250 hPa).
+- **cadeia de curto prazo**: primeiras 6 h de cada run (pressão, vento, rajada, precipitação,
+  T2m), horária no GFS e no ICON-EU;
 - **radar** (RainViewer) de 10 em 10 min enquanto o evento decorre (mosaicos 512 px, z3–z6).
 
 O arquivo fica em `~/Library/Application Support/ForecastWorkstation/archive`
@@ -126,6 +128,20 @@ Recuperação posterior: GFS (AWS `noaa-gfs-bdp-pds`; NOMADS ~10 dias) e ECMWF I
 ```bash
 cd backend && ../.venv/bin/python -m app.archive
 ```
+
+## Casos (análise de casos particulares)
+
+Separador **Casos**, sobre um evento arquivado:
+
+- **Trajetórias** — cada sistema (semente: nome, posição e hora, p. ex. do comunicado do IPMA) é
+  seguido nas análises de cada modelo como mínimo da pressão MSL suavizada (3/3 h; AIFS 6/6 h),
+  com as trajetórias previstas pelas runs 00/12Z de −24/−48/−72/−96 h antes do máximo de
+  intensidade; fundo: pressão mínima atingida durante o evento.
+- **Pressão central** — analisada por modelo vs. prevista.
+- **Sequência sinótica** — mosaico de pressão MSL + precipitação em 6 h a cada 6/12/24 h.
+- **Precipitação total** e **rajada máxima** do evento — a partir da *cadeia de curto prazo*
+  (primeiras 6 h de cada run de 6 em 6 h; GFS/ICON-EU horário, ECMWF 3 h, AIFS 6 h).
+- **Evolução num local** — pressão, vento/rajada, intensidade da precipitação e T2m.
 
 ## Vagas de calor e de frio
 
