@@ -515,6 +515,9 @@ async def _worker_main():
     """`python -m app.archive` — archive all events now and keep capturing radar until
     every event has ended (used when the app itself is not running)."""
     import os
+    if other_worker_running():          # e.g. started again by the login agent
+        print("arquivador já em execução — nada a fazer", flush=True)
+        return
     PID_FILE.write_text(str(os.getpid()))
     def log(msg):
         line = f"{_utcnow():%Y-%m-%d %H:%M:%S} {msg}"
