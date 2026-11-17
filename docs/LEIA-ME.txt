@@ -35,6 +35,20 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.3.0 (17/11/2026)
+  • Eventos históricos: um evento que já acabou há mais de 10 dias (por
+    exemplo, o furacão Leslie de outubro de 2018) é preenchido com a
+    reanálise ERA5 do ECMWF (horária, 27 níveis), as análises do GFS
+    guardadas pela NOAA e as radiossondas da época. Não é preciso conta.
+  • Ciclones tropicais: indicando o código do NHC (ex.: AL132018), o
+    evento guarda a trajetória observada e as previsões oficiais e dos
+    modelos; no separador "Casos" há dois produtos novos — trajetórias
+    previstas e onde/quando cada previsão punha a chegada a terra.
+  • ERA5 aparece como modelo em todos os separadores (só para eventos
+    históricos importados).
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.2.0 (17/11/2026)
   • Novo separador "Eventos": arquiva uma tempestade (todos os modelos,
     radar e radiossondas) enquanto decorre, para a poder analisar depois.

@@ -72,7 +72,7 @@ if sys.platform == "darwin":
         icon=None,
         bundle_identifier="com.pedrotildes.forecast",
         info_plist={
-            "CFBundleShortVersionString": "1.2.0",
+            "CFBundleShortVersionString": "1.3.0",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.weather",
         },
