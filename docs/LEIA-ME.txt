@@ -35,6 +35,21 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.4.0 (17/11/2026)
+  • Eventos recentes que já saíram dos servidores (desde 2021 para o
+    GFS, 2023 para o ECMWF e 2025 para o AIFS): as previsões completas
+    vêm dos arquivos públicos na AWS, além da reanálise ERA5. Dá para
+    ver o que cada modelo previa dias antes (ex.: depressão Kristin,
+    janeiro de 2026).
+  • Nova região para eventos: Atlântico NE, Ibéria e Ilhas Britânicas.
+  • Seguimento de depressões muito rápidas (até ~130 km/h) e mais
+    robusto no arranque das previsões.
+  • Cortes verticais da ERA5 de 3 em 3 horas; mapas da ERA5 indicados
+    como análise; sondagens observadas sem vento ou sem alturas nos
+    níveis baixos já não dão erro.
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.3.0 (17/11/2026)
   • Eventos históricos: um evento que já acabou há mais de 10 dias (por
     exemplo, o furacão Leslie de outubro de 2018) é preenchido com a
