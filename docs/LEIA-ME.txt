@@ -21,9 +21,31 @@ originais (GRIB2):
   • Vagas de calor e de frio (critério IPMA/OMM) e sinal do
     ensemble ECMWF (51 membros).
   • Satélite Meteosat (EUMETSAT) e radar, animados.
+  • Cortes verticais ao longo de uma linha A→B (vento, θ, θe, humidade,
+    movimento vertical, vorticidade potencial), também comparando modelos.
+  • Eventos: arquivo permanente de tempestades (modelos, radar e
+    radiossondas), para lá do tempo em que os servidores guardam os dados.
+  • Casos: análise de um evento arquivado — trajetórias das depressões,
+    pressão central, sequência sinótica, totais de chuva e rajadas,
+    sondagens observadas (radiossondas) vs. modelos, meteogramas e cortes.
 
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
+
+VERSÃO 1.2.0 (17/11/2026)
+  • Novo separador "Eventos": arquiva uma tempestade (todos os modelos,
+    radar e radiossondas) enquanto decorre, para a poder analisar depois.
+  • Novo separador "Casos": trajetórias seguidas automaticamente,
+    evolução da pressão central (analisada vs. prevista), sequência
+    sinótica, precipitação total, rajada máxima, evolução num local,
+    sondagens com a radiossonda observada e meteograma do caso.
+  • Cortes verticais (Sondagens → Corte vertical A→B; ou, em Mapas,
+    "Clique no mapa abre: Corte vertical"; também em Comparar e Casos).
+  • Corrigido: as runs 06 e 18 UTC do ECMWF passam a aparecer (até +144 h).
+  • Corrigido: o mapa de fundo do Satélite/Radar mostrava "API KEY
+    REQUIRED" (o fornecedor antigo passou a exigir chave).
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
 
 VERSÃO 1.1.0 (07/10/2026)
   • Novo modelo ICON-EU do serviço meteorológico alemão (DWD): resolução
@@ -119,18 +141,22 @@ Requisitos: Windows 10 ou 11 (64 bits).
    → Mac:     ~/Library/Application Support/ForecastWorkstation
      Windows: %LOCALAPPDATA%\ForecastWorkstation
      A app limpa sozinha as runs antigas. Podes apagar a pasta à
-     vontade — será recriada.
+     vontade — será recriada —, MAS a subpasta "archive" guarda os
+     eventos arquivados: se a apagares, perdes esses eventos.
 
 • "Não carrega nada / gráficos vazios"
    → Verifica a ligação à Internet.
 
-• "O radar mostra 'API KEY REQUIRED'"
-   → O serviço de radar (RainViewer) limita os pedidos por minuto.
-     Espera um minuto e volta a tentar, sem fazer zoom muito depressa.
+• "O radar não aparece ou falha"
+   → O serviço de radar (RainViewer) limita os pedidos por minuto e só
+     guarda as últimas ~2 horas. Espera um minuto e volta a tentar, sem
+     fazer zoom muito depressa. Para guardar o radar de uma tempestade,
+     cria um evento no separador "Eventos".
 
 • "É seguro?"
    → Sim. Os avisos do Mac/Windows aparecem apenas porque a app não
      tem uma assinatura digital paga — não significa que seja perigosa.
 
 Fontes de dados: NOAA/NCEP (GFS), ECMWF Open Data (CC BY 4.0), DWD (ICON-EU),
-EUMETSAT (satélite), RainViewer (radar), NOAA CPC (climatologia).
+EUMETSAT (satélite), RainViewer (radar), NOAA CPC (climatologia),
+Universidade do Wyoming e NOAA IGRA (radiossondas), Esri (mapa de fundo).

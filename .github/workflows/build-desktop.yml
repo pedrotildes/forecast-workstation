@@ -43,7 +43,7 @@ jobs:
 
       # A green build is not enough: start the frozen app headless and require
       # /api/health to answer (catches missing modules / native libraries).
-      - name: Smoke test (start bundle, render a map and a sounding)
+      - name: Smoke test (start bundle, render a map, a sounding and a cross-section)
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
             EXE="backend/dist/Forecast Workstation.app/Contents/MacOS/ForecastWorkstation"
@@ -60,7 +60,8 @@ jobs:
           # exercises GRIB download + ecCodes + MetPy + the spawn-based render pool
           curl -sf -o snd.png "$B/api/sounding.png?model=ecmwf&run=$RUN&step=24&lat=38.72&lon=-9.14"
           curl -sf -o map.png "$B/api/map?model=ecmwf&run=$RUN&step=24&region=iberia&preset=t850"
-          python -c "import sys; [sys.exit(f + ' is not a PNG') for f in ('snd.png','map.png') if open(f,'rb').read(8) != bytes([137,80,78,71,13,10,26,10])]; print('render OK')"
+          curl -sf -o xs.png "$B/api/xsection.png?model=ecmwf&run=$RUN&step=24&lat0=32.65&lon0=-16.91&lat1=38.72&lon1=-9.14&kind=pv"
+          python -c "import sys; [sys.exit(f + ' is not a PNG') for f in ('snd.png','map.png','xs.png') if open(f,'rb').read(8) != bytes([137,80,78,71,13,10,26,10])]; print('render OK')"
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
