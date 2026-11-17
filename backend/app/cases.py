@@ -39,17 +39,22 @@ def systems(ev: dict) -> list[dict]:
     return ev.get("systems") or DEFAULT_SYSTEMS.get(ev["id"], [])
 
 
-def _domain():
+def _domain(model=None):
+    """Event area (clipped to the model's coverage, which is how the archive stored it)."""
     from .models.base import Domain
     d = REGIONS["nea"].download_domain
-    return Domain(d.lon0, d.lon1, d.lat0, d.lat1)
+    lo0, lo1, la0, la1 = d.lon0, d.lon1, d.lat0, d.lat1
+    if model is not None and model.coverage:
+        c = model.coverage
+        lo0, lo1, la0, la1 = max(lo0, c[0]), min(lo1, c[1]), max(la0, c[2]), min(la1, c[3])
+    return Domain(lo0, lo1, la0, la1)
 
 
 async def _field(model, run, step, key):
     if run > archive._utcnow():
         return None                       # not run yet
     try:
-        f = await model.fetch(run, step, [key], _domain())
+        f = await model.fetch(run, step, [key], _domain(model))
     except FieldUnavailable:
         return None
     return f.get(key)
@@ -117,6 +122,49 @@ def _speed_radius(hours: float) -> float:
     return max(350.0, 95.0 * hours)          # up to ~95 km/h displacement
 
 
+def _local_minima(f: Field, lat0, lon0, radius_km):
+    """Closed lows of the smoothed MSLP within radius_km: [(lat, lon, hPa, km)]."""
+    from scipy.ndimage import minimum_filter
+    res = abs(float(f.lats[1] - f.lats[0])) if len(f.lats) > 1 else 0.25
+    v = np.asarray(f.values, dtype=float)
+    if np.isnan(v).all():
+        return []
+    v = np.where(np.isnan(v), np.nanmax(v), v)
+    sm = gaussian_filter(v, max(1.0, 0.4 / res))
+    k = max(2, int(1.5 / res))
+    LA, LO = np.meshgrid(f.lats, f.lons, indexing="ij")
+    d = _dist_km(lat0, lon0, LA, LO)
+    mask = (sm == minimum_filter(sm, size=2 * k + 1, mode="nearest")) & (d <= 0.92 * radius_km)
+    out = []
+    for j, i in zip(*np.nonzero(mask)):
+        near = _dist_km(LA[j, i], LO[j, i], LA, LO) <= 60
+        out.append((float(LA[j, i]), float(LO[j, i]), float(np.min(v[near]) / 100.0), float(d[j, i])))
+    return out
+
+
+def _jump(f, lat, lon, hrs, last_p, motion):
+    """The centre may re-form ahead of the old one (or move very fast): look farther for a
+    closed low roughly along the recent direction of motion (±75°), not much shallower than
+    before; the nearest such low is taken (a deeper neighbouring system is not grabbed)."""
+    if motion is None or np.hypot(*motion) < 0.3:
+        return None
+    best = None
+    for la, lo, p, d in _local_minima(f, lat, lon, min(950.0, 2.2 * _speed_radius(hrs))):
+        if p > last_p + 6:
+            continue
+        dy, dx = la - lat, (lo - lon) * np.cos(np.radians(lat))
+        cosang = (dx * motion[1] + dy * motion[0]) / (np.hypot(dx, dy) * np.hypot(*motion) + 1e-9)
+        if cosang >= np.cos(np.radians(75)) and (best is None or d < best[3]):
+            best = (la, lo, p, d)
+    return best[:3] if best else None
+
+
+def _motion(prev, cur):
+    if prev is None:
+        return None
+    return (cur[0] - prev[0], (cur[1] - prev[1]) * np.cos(np.radians(cur[0])))
+
+
 def _ref_pos(ref, t):
     """Position of a reference track at the time nearest to t (within 3 h)."""
     best = min(ref, key=lambda p: abs(archive.parse_t(p["time"]) - t), default=None)
@@ -138,7 +186,7 @@ async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> li
 
     def follow(order):
         lat, lon = system["lat"], system["lon"]
-        last_t = None
+        last_t, last_p, motion = None, None, None
         for k in order:
             f = fields[k]
             if f is None:
@@ -150,13 +198,16 @@ async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> li
                 lat, lon = rp
             hrs = abs((times[k] - last_t).total_seconds()) / 3600 if last_t else 6
             c = find_centre(f, lat, lon, _speed_radius(hrs) if last_t else (300.0 if ref else 500.0))
+            if c is None and last_t is not None:
+                c = _jump(f, lat, lon, hrs, last_p, motion)
             if c is None:
                 if last_t is None:
                     continue
                 break
+            motion = _motion((lat, lon) if last_t else None, c)
             lat, lon, p = c
             track[k] = {"time": times[k].isoformat(), "lat": lat, "lon": lon, "p": p}
-            last_t = times[k]
+            last_t, last_p = times[k], p
 
     if ref and fields[i0] is None:
         # no data at the seed time: start where this model's data begin
@@ -174,16 +225,20 @@ async def track_forecast(model, run, ev, start: dict) -> list[dict]:
         return []
     steps = [s for s in await model.list_steps(run) if s >= st0 and (run + s * H) <= t1]
     steps = [s for s in steps if s % 6 == st0 % 6] or steps
-    out, lat, lon, last = [], start["lat"], start["lon"], None
+    out, lat, lon, last, last_p, motion = [], start["lat"], start["lon"], None, None, None
     for s in steps:
         f = await _field(model, run, s, ("msl", 0))
         if f is None:
             continue
         hrs = (s - last) if last is not None else 0
         c = find_centre(f, lat, lon, _speed_radius(hrs) if last is not None else 300.0)
+        if c is None and last is not None:
+            c = _jump(f, lat, lon, hrs, last_p, motion)
         if c is None:
             break
+        motion = _motion((lat, lon) if last is not None else None, c)
         lat, lon, p = c
+        last_p = p
         out.append({"time": (run + s * H).isoformat(), "lat": lat, "lon": lon, "p": p, "step": s})
         last = s
     return out

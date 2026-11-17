@@ -27,7 +27,7 @@ from .workers import (compare_sounding_worker, render_map_worker, render_meteogr
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "14"
+RENDER_VERSION = "15"
 
 
 @app.middleware("http")
