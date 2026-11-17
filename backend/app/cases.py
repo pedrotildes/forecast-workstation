@@ -50,6 +50,13 @@ def _domain(model=None):
     return Domain(lo0, lo1, la0, la1)
 
 
+async def _steps(model, run) -> list[int]:
+    """Steps of a run: the event archive's when it holds the run (no server round trips for
+    runs long gone from the servers), else the model's live listing."""
+    st = archive.archived_steps(model.id, run)
+    return sorted(st) if st else await model.list_steps(run)
+
+
 async def _field(model, run, step, key):
     if run > archive._utcnow():
         return None                       # not run yet
@@ -108,6 +115,9 @@ def find_centre(f: Field, lat0, lon0, radius_km):
     j, i = np.unravel_index(np.argmin(np.where(inside, sm, np.inf)), sm.shape)
     if d[j, i] > 0.92 * radius_km:
         return None                                      # minimum on the rim: no closed low
+    e = max(2, int(0.75 / res))
+    if j < e or i < e or j >= sm.shape[0] - e or i >= sm.shape[1] - e:
+        return None                                      # at the edge of the model's data
     # must be a real local minimum of the smoothed field (± ~1.5°)
     k = max(2, int(1.5 / res))
     win = sm[max(0, j - k):j + k + 1, max(0, i - k):i + k + 1]
@@ -119,7 +129,7 @@ def find_centre(f: Field, lat0, lon0, radius_km):
 
 
 def _speed_radius(hours: float) -> float:
-    return max(350.0, 95.0 * hours)          # up to ~95 km/h displacement
+    return max(350.0, 110.0 * hours)         # up to ~110 km/h displacement (Charles: ~90 km/h)
 
 
 def _local_minima(f: Field, lat0, lon0, radius_km):
@@ -135,6 +145,8 @@ def _local_minima(f: Field, lat0, lon0, radius_km):
     LA, LO = np.meshgrid(f.lats, f.lons, indexing="ij")
     d = _dist_km(lat0, lon0, LA, LO)
     mask = (sm == minimum_filter(sm, size=2 * k + 1, mode="nearest")) & (d <= 0.92 * radius_km)
+    e = max(2, int(0.75 / res))
+    mask[:e], mask[-e:], mask[:, :e], mask[:, -e:] = False, False, False, False   # data edge
     out = []
     for j, i in zip(*np.nonzero(mask)):
         near = _dist_km(LA[j, i], LO[j, i], LA, LO) <= 60
@@ -144,19 +156,35 @@ def _local_minima(f: Field, lat0, lon0, radius_km):
 
 def _jump(f, lat, lon, hrs, last_p, motion):
     """The centre may re-form ahead of the old one (or move very fast): look farther for a
-    closed low roughly along the recent direction of motion (±75°), not much shallower than
-    before; the nearest such low is taken (a deeper neighbouring system is not grabbed)."""
+    closed low roughly along the recent direction of motion (±75°) with a similar central
+    pressure; the nearest such low is taken (a deeper neighbouring system is not grabbed)."""
     if motion is None or np.hypot(*motion) < 0.3:
         return None
     best = None
     for la, lo, p, d in _local_minima(f, lat, lon, min(950.0, 2.2 * _speed_radius(hrs))):
-        if p > last_p + 6:
+        if abs(p - last_p) > max(8.0, 2.0 * hrs):
             continue
         dy, dx = la - lat, (lo - lon) * np.cos(np.radians(lat))
         cosang = (dx * motion[1] + dy * motion[0]) / (np.hypot(dx, dy) * np.hypot(*motion) + 1e-9)
         if cosang >= np.cos(np.radians(75)) and (best is None or d < best[3]):
             best = (la, lo, p, d)
     return best[:3] if best else None
+
+
+def _next_centre(f, lat, lon, hrs, last_p, motion, last_hrs):
+    """Next position of a tracked low: the closed low nearest to where its recent motion takes
+    it (within the speed radius) — not simply the lowest pressure in the search circle, which
+    can be a deeper neighbour; failing that, a centre re-formed farther along the motion."""
+    elat, elon = lat, lon
+    if motion is not None and last_hrs:
+        k = hrs / last_hrs
+        elat = lat + motion[0] * k
+        elon = lon + motion[1] * k / max(0.2, float(np.cos(np.radians(lat))))
+    dp = max(12.0, 3.0 * hrs)            # explosive deepening reaches ~8 hPa in 6 h
+    cands = [c for c in _local_minima(f, lat, lon, _speed_radius(hrs)) if abs(c[2] - last_p) <= dp]
+    if cands:
+        return min(cands, key=lambda c: float(_dist_km(elat, elon, c[0], c[1])))[:3]
+    return _jump(f, lat, lon, hrs, last_p, motion)
 
 
 def _motion(prev, cur):
@@ -184,9 +212,9 @@ async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> li
     fields = await asyncio.gather(*(analysis_field(model, t, ("msl", 0)) for t in times))
     track = {}
 
-    def follow(order):
+    def follow(order, motion0=None, hrs0=None):
         lat, lon = system["lat"], system["lon"]
-        last_t, last_p, motion = None, None, None
+        last_t, last_p, motion, last_hrs = None, None, None, None
         for k in order:
             f = fields[k]
             if f is None:
@@ -197,23 +225,32 @@ async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> li
                     continue
                 lat, lon = rp
             hrs = abs((times[k] - last_t).total_seconds()) / 3600 if last_t else 6
-            c = find_centre(f, lat, lon, _speed_radius(hrs) if last_t else (300.0 if ref else 500.0))
-            if c is None and last_t is not None:
-                c = _jump(f, lat, lon, hrs, last_p, motion)
+            if last_t is None:
+                c = find_centre(f, lat, lon, 300.0 if ref else 500.0)
+            else:
+                c = _next_centre(f, lat, lon, hrs, last_p, motion, last_hrs)
             if c is None:
                 if last_t is None:
                     continue
                 break
             motion = _motion((lat, lon) if last_t else None, c)
+            if motion is None and motion0 is not None:
+                motion, hrs = motion0, hrs0          # backward pass: reversed forward motion
             lat, lon, p = c
             track[k] = {"time": times[k].isoformat(), "lat": lat, "lon": lon, "p": p}
-            last_t, last_p = times[k], p
+            last_t, last_p, last_hrs = times[k], p, hrs
 
     if ref and fields[i0] is None:
         # no data at the seed time: start where this model's data begin
         i0 = next((k for k, f in enumerate(fields) if f is not None and _ref_pos(ref, times[k])), i0)
     follow(range(i0, len(times)))
-    follow(range(i0, -1, -1))
+    ks = sorted(k for k in track if k >= i0)
+    m0 = h0 = None
+    if len(ks) >= 2:
+        a, b = track[ks[0]], track[ks[1]]
+        m0 = _motion((b["lat"], b["lon"]), (a["lat"], a["lon"]))          # b → a: backwards
+        h0 = (times[ks[1]] - times[ks[0]]).total_seconds() / 3600
+    follow(range(i0, -1, -1), m0, h0)
     return [track[k] for k in sorted(track)]
 
 
@@ -223,32 +260,42 @@ async def track_forecast(model, run, ev, start: dict) -> list[dict]:
     st0 = int((archive.parse_t(start["time"]) - run).total_seconds() // 3600)
     if st0 < 0:
         return []
-    steps = [s for s in await model.list_steps(run) if s >= st0 and (run + s * H) <= t1]
+    steps = [s for s in await _steps(model, run) if s >= st0 and (run + s * H) <= t1]
     steps = [s for s in steps if s % 6 == st0 % 6] or steps
-    out, lat, lon, last, last_p, motion = [], start["lat"], start["lon"], None, None, None
+    out, lat, lon, last, last_p, motion, last_hrs = [], start["lat"], start["lon"], None, None, None, None
     for s in steps:
         f = await _field(model, run, s, ("msl", 0))
         if f is None:
             continue
         hrs = (s - last) if last is not None else 0
-        c = find_centre(f, lat, lon, _speed_radius(hrs) if last is not None else 300.0)
-        if c is None and last is not None:
-            c = _jump(f, lat, lon, hrs, last_p, motion)
+        if last is None:
+            c = find_centre(f, lat, lon, 300.0)
+        else:
+            c = _next_centre(f, lat, lon, hrs, last_p, motion, last_hrs)
         if c is None:
             break
         motion = _motion((lat, lon) if last is not None else None, c)
         lat, lon, p = c
-        last_p = p
+        last_p, last_hrs = p, hrs
         out.append({"time": (run + s * H).isoformat(), "lat": lat, "lon": lon, "p": p, "step": s})
         last = s
     return out
 
 
-def select_forecasts(fcs: dict, ref: list[dict], leads=(24, 48, 72, 96)) -> dict:
-    """Keep the runs closest to 24/48/72/96 h before the deepest analysed point."""
+def focus_time(system: dict, ref: list[dict]):
+    """Moment the forecasts are verified against: the system's ``focus`` (e.g. landfall)
+    when set, else the deepest analysed point."""
+    if system.get("focus"):
+        return archive.parse_t(system["focus"])
+    return archive.parse_t(min(ref, key=lambda p: p["p"])["time"]) if ref else None
+
+
+def select_forecasts(fcs: dict, ref: list[dict], leads=(24, 48, 72, 96), focus=None) -> dict:
+    """Keep the runs closest to 24/48/72/96 h before the focus time (default: the deepest
+    analysed point)."""
     if not fcs or not ref:
         return {}
-    peak = archive.parse_t(min(ref, key=lambda p: p["p"])["time"])
+    peak = focus or archive.parse_t(min(ref, key=lambda p: p["p"])["time"])
     out = {}
     for L in leads:
         target = peak - L * H
@@ -337,7 +384,7 @@ async def point_chain(model, ev, lat, lon) -> dict:
     state, precip = {}, {}
     keys = [(n, 0) for n in ("msl", "u10", "v10", "gust", "tp", "t2m") if model.has(n)]
     for r in chain_runs(ev):
-        steps = sorted(set(await model.list_steps(r)) & set(range(0, 7)))
+        steps = sorted(set(await _steps(model, r)) & set(range(0, 7)))
         prev_s, prev_tp = 0, 0.0
         for s in steps:
             try:
@@ -439,12 +486,14 @@ async def build_track_job(ev, models: list[str], fc_model: str | None, region="n
         fm = MODELS[fc_model]
         for sysname, per in tracks.items():
             ref = per.get(fc_model) or next((v for v in per.values() if v), [])
-            fcs = select_forecasts(await forecast_runs(fm, ev, ref), ref)
+            sysd = next((x for x in systems(ev) if x["name"] == sysname), {})
+            fz = focus_time(sysd, ref)
+            fcs = select_forecasts(await forecast_runs(fm, ev, ref), ref, focus=fz)
             greys = ["#7f1d1d", "#b91c1c", "#f97316", "#facc15"]   # recent -> older
             for k, (r, (tr, lead)) in enumerate(sorted(fcs.items(), reverse=True)):
                 layers.append({"type": "track", "points": [(p["lon"], p["lat"], None) for p in tr],
                                "color": greys[k % 4], "ls": (0, (4, 2)), "lw": 1.4, "ms": 2.5,
-                               "label": f"{sysname} · previsão {fm.name} {_label(r)} (−{lead} h)"})
+                               "label": f"{sysname} · previsão {fm.name} {_label(r)} (−{lead} h de {_label(fz.isoformat())})"})
     names = " e ".join(tracks)
     return {"region": region, "lats": grid.lats, "lons": grid.lons, "layers": layers,
             "header": {"left1": f"Trajetórias: {names}",

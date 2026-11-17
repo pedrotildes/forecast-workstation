@@ -940,6 +940,8 @@ function renderSystems() {
       <input class="la" type="number" step="0.1" value="${s.lat}" title="latitude">
       <input class="lo" type="number" step="0.1" value="${s.lon}" title="longitude">
       <input class="t" type="datetime-local" value="${String(s.time).slice(0, 16)}" title="hora UTC">
+      <input class="f" type="datetime-local" value="${s.focus ? String(s.focus).slice(0, 16) : ""}"
+        title="momento de referência das previsões (opcional; por omissão, o de pressão mínima)">
       <button title="remover">✕</button></div>`).join("") || `<p class="hint">Sem sistemas definidos.</p>`;
   $$("#case-systems .case-sys button").forEach((b) => b.onclick = () => {
     readSystems(); S.cs.systems.splice(+b.parentElement.dataset.i, 1); renderSystems();
@@ -947,7 +949,8 @@ function renderSystems() {
 }
 function readSystems() {
   S.cs.systems = $$("#case-systems .case-sys").map((r) => ({
-    name: $(".n", r).value, lat: +$(".la", r).value, lon: +$(".lo", r).value, time: $(".t", r).value }));
+    name: $(".n", r).value, lat: +$(".la", r).value, lon: +$(".lo", r).value, time: $(".t", r).value,
+    focus: $(".f", r).value || undefined }));
 }
 
 function initCases() {

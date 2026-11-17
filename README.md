@@ -166,9 +166,12 @@ cd backend && ../.venv/bin/python -m app.archive
 Separador **Casos**, sobre um evento arquivado:
 
 - **Trajetórias** — cada sistema (semente: nome, posição e hora, p. ex. do comunicado do IPMA) é
-  seguido nas análises de cada modelo como mínimo da pressão MSL suavizada (3/3 h; AIFS 6/6 h),
-  com as trajetórias previstas pelas runs 00/12Z de −24/−48/−72/−96 h antes do máximo de
-  intensidade; fundo: pressão mínima atingida durante o evento.
+  seguido nas análises de cada modelo como mínimo fechado da pressão MSL suavizada (3/3 h; AIFS 6/6 h):
+  em cada passo, o mínimo mais próximo da posição esperada pelo movimento, admitindo reformações do
+  centro (até ~950 km na direção do movimento) e ignorando a margem dos dados de cada modelo. As
+  trajetórias previstas são as das runs 00/12Z de −24/−48/−72/−96 h antes do momento de referência
+  do sistema (opcional, p. ex. a chegada a terra; por omissão, o de pressão mínima); fundo: pressão
+  mínima atingida durante o evento.
 - **Pressão central** — analisada por modelo vs. prevista.
 - **Sequência sinótica** — mosaico de pressão MSL + precipitação em 6 h a cada 6/12/24 h.
 - **Precipitação total** e **rajada máxima** do evento — a partir da *cadeia de curto prazo*

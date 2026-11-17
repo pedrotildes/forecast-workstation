@@ -27,7 +27,7 @@ from .workers import (compare_sounding_worker, render_map_worker, render_meteogr
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "15"
+RENDER_VERSION = "16"
 
 
 @app.middleware("http")
@@ -701,8 +701,11 @@ async def case_systems_set(eid: str, body: list[dict]):
     clean = []
     for s in body:
         try:
-            clean.append({"name": str(s["name"]).strip()[:40], "lat": float(s["lat"]),
-                          "lon": float(s["lon"]), "time": archive.parse_t(s["time"]).isoformat()})
+            item = {"name": str(s["name"]).strip()[:40], "lat": float(s["lat"]),
+                    "lon": float(s["lon"]), "time": archive.parse_t(s["time"]).isoformat()}
+            if s.get("focus"):
+                item["focus"] = archive.parse_t(s["focus"]).isoformat()
+            clean.append(item)
         except (KeyError, ValueError, TypeError):
             raise HTTPException(400, "sistema inválido (nome, lat, lon, hora UTC)") from None
     archive.update_event(eid, systems=clean)
@@ -743,19 +746,24 @@ async def case_totals_png(eid: str, model: str = "ecmwf", kind: str = "precip", 
 
 @app.get("/api/cases/{eid}/pressure.png")
 async def case_pressure_png(eid: str, models: str = "gfs,ecmwf,aifs,icon_eu", fc: str = "ecmwf"):
-    from .cases import all_tracks, forecast_runs, select_forecasts
+    from .cases import all_tracks, focus_time, forecast_runs, select_forecasts, systems
     ev = _case_event(eid)
     ms = [m for m in models.split(",") if m in MODELS] or ["ecmwf"]
 
     async def produce():
         tracks = await all_tracks(ev, ms)
-        fcs = {}
+        fcs, leads, focus = {}, {}, {}
         if fc in MODELS:
             for name, per in tracks.items():
                 ref = per.get(fc) or next((v for v in per.values() if v), [])
-                sel = select_forecasts(await forecast_runs(MODELS[fc], ev, ref), ref)
+                sysd = next((x for x in systems(ev) if x["name"] == name), {})
+                fz = focus_time(sysd, ref)
+                sel = select_forecasts(await forecast_runs(MODELS[fc], ev, ref), ref, focus=fz)
                 fcs[name] = {r: tr for r, (tr, lead) in sel.items()}
-        data = {"event": ev["name"], "tracks": tracks, "forecasts": fcs, "fc_model": fc}
+                leads[name] = {r: lead for r, (tr, lead) in sel.items()}
+                focus[name] = fz.isoformat() if fz else None
+        data = {"event": ev["name"], "tracks": tracks, "forecasts": fcs, "fc_model": fc,
+                "leads": leads, "focus": focus}
         try:
             return await asyncio.get_running_loop().run_in_executor(
                 POOL, render_case_worker, "pressure", data)

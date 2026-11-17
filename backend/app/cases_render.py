@@ -50,7 +50,7 @@ def render_pressure(data: dict) -> bytes:
     fig_h = 3.6 * n + 1.3
     fig = Figure(figsize=(14.5, fig_h), dpi=110, facecolor="white")
     FigureCanvasAgg(fig)
-    gs = fig.add_gridspec(n, 1, hspace=0.32, left=0.06, right=0.97, top=1 - 1.0 / fig_h,
+    gs = fig.add_gridspec(n, 1, hspace=0.32, left=0.06, right=0.9, top=1 - 1.0 / fig_h,
                           bottom=0.5 / fig_h)
     t_all = [_t(p["time"]) for per in data["tracks"].values() for tr in per.values() for p in tr]
     for per in data.get("forecasts", {}).values():
@@ -64,11 +64,22 @@ def render_pressure(data: dict) -> bytes:
         axes.append(ax)
         fcs = data.get("forecasts", {}).get(sysname, {})
         cmap = matplotlib.colormaps["Greys"]
+        leads = data.get("leads", {}).get(sysname, {})
         for k, (r, tr) in enumerate(sorted(fcs.items())):
             shade = 0.35 + 0.55 * (k + 1) / max(1, len(fcs))
             ax.plot([_t(p["time"]) for p in tr], [p["p"] for p in tr], color=cmap(shade), lw=1.0,
                     ls=(0, (4, 2)), zorder=3,
                     label=f"previsões {NAMES.get(data['fc_model'], '')} (mais escuro = mais recente)" if k == len(fcs) - 1 else None)
+            if tr and r in leads:
+                rt = _t(r)
+                ax.annotate(f"run {rt.day:02d}/{rt:%H}Z (−{leads[r]} h)", xy=(_t(tr[-1]["time"]), tr[-1]["p"]),
+                            xytext=(4, 0), textcoords="offset points", fontsize=7, color=cmap(shade),
+                            va="center", zorder=4)
+        fz = data.get("focus", {}).get(sysname)
+        if fz:
+            ax.axvline(_t(fz), color="#b45309", lw=1.0, ls=":", zorder=2)
+            ax.text(_t(fz), 0.98, " referência das previsões", transform=ax.get_xaxis_transform(),
+                    fontsize=7.5, color="#b45309", va="top")
         for mid, tr in data["tracks"][sysname].items():
             if not tr:
                 continue
