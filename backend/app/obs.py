@@ -31,6 +31,9 @@ for _d in (OBS_DIR, IGRA_CACHE):
 
 WYOMING = "https://weather.uwyo.edu/wsgi/sounding"
 IGRA_Y2D = "https://www.ncei.noaa.gov/pub/data/igra/data/data-y2d"
+IGRA_POR = "https://www.ncei.noaa.gov/pub/data/igra/data/data-por"
+# older WMO numbers of the same launch site, tried at the University of Wyoming
+ALIASES = {"08536": ["08579"]}
 KT = 1.943844
 
 # WMO id, IGRA id, name, lat, lon
@@ -115,9 +118,20 @@ def _num(x):
 
 
 async def _wyoming(c: httpx.AsyncClient, sid: str, when: dt.datetime) -> dict | None:
+    """High-resolution BUFR soundings first, then older (TEMP) soundings (src=UNKNOWN); also
+    the station's older WMO numbers."""
+    for wid in [sid] + ALIASES.get(sid, []):
+        for src in ("BUFR", "UNKNOWN"):
+            prof = await _wyoming_one(c, sid, wid, src, when)
+            if prof:
+                return prof
+    return None
+
+
+async def _wyoming_one(c: httpx.AsyncClient, sid: str, wid: str, src: str, when: dt.datetime) -> dict | None:
     try:
-        r = await c.get(WYOMING, params={"src": "BUFR", "datetime": when.strftime("%Y-%m-%d %H:00:00"),
-                                         "id": sid, "type": "TEXT:CSV"})
+        r = await c.get(WYOMING, params={"src": src, "datetime": when.strftime("%Y-%m-%d %H:00:00"),
+                                         "id": wid, "type": "TEXT:CSV"})
     except httpx.HTTPError:
         return None
     if r.status_code != 200:
@@ -137,84 +151,86 @@ async def _wyoming(c: httpx.AsyncClient, sid: str, when: dt.datetime) -> dict | 
     g = lambda k: [_num(r.get(k)) for r in rows]  # noqa: E731
     return _profile(g("pressure_hPa"), g("geopotential height_m"), g("temperature_C"),
                     g("dew point temperature_C"), g("wind direction_degree"), g("wind speed_m/s"),
-                    "Univ. Wyoming (BUFR)", sid, when)
+                    "Univ. Wyoming (BUFR)" if src == "BUFR" else f"Univ. Wyoming ({wid})", sid, when)
 
 
 _igra_lock = asyncio.Lock()
 
 
-async def _igra_text(c: httpx.AsyncClient, igra_id: str) -> str | None:
+async def _igra_zip(c: httpx.AsyncClient, igra_id: str, year: int):
+    """Cached IGRA zip with the station's soundings: the year-to-date file for the current
+    year, the whole period of record (~30 MB) for older years."""
     async with _igra_lock:
-        idx = IGRA_CACHE / "_index.html"
-        if not idx.exists() or time.time() - idx.stat().st_mtime > 6 * 3600:
+        if year >= dt.datetime.utcnow().year:
+            idx = IGRA_CACHE / "_index.html"
+            if not idx.exists() or time.time() - idx.stat().st_mtime > 6 * 3600:
+                try:
+                    r = await c.get(IGRA_Y2D + "/")
+                    r.raise_for_status()
+                    idx.write_text(r.text)
+                except httpx.HTTPError:
+                    if not idx.exists():
+                        return None
+            m = re.search(rf"{igra_id}-data-beg\d+\.txt\.zip", idx.read_text())
+            if not m:
+                return None
+            name, url, max_age = m.group(0), f"{IGRA_Y2D}/{m.group(0)}", 6 * 3600
+        else:
+            name, url, max_age = f"{igra_id}-data.txt.zip", f"{IGRA_POR}/{igra_id}-data.txt.zip", 30 * 86400
+        z = IGRA_CACHE / name
+        if not z.exists() or time.time() - z.stat().st_mtime > max_age:
             try:
-                r = await c.get(IGRA_Y2D + "/")
-                r.raise_for_status()
-                idx.write_text(r.text)
-            except httpx.HTTPError:
-                if not idx.exists():
-                    return None
-        m = re.search(rf"{igra_id}-data-beg\d+\.txt\.zip", idx.read_text())
-        if not m:
-            return None
-        z = IGRA_CACHE / m.group(0)
-        if not z.exists() or time.time() - z.stat().st_mtime > 6 * 3600:
-            try:
-                r = await c.get(f"{IGRA_Y2D}/{m.group(0)}")
+                r = await c.get(url)
                 r.raise_for_status()
                 z.write_bytes(r.content)
             except httpx.HTTPError:
                 if not z.exists():
                     return None
-        try:
-            with zipfile.ZipFile(z) as zf:
-                return zf.read(zf.namelist()[0]).decode("utf-8", errors="ignore")
-        except zipfile.BadZipFile:
-            z.unlink(missing_ok=True)
-            return None
+        return z
 
 
-def _igra_parse(text: str, sid: str, when: dt.datetime) -> dict | None:
-    lines = text.splitlines()
+def _igra_find(z, sid: str, when: dt.datetime) -> dict | None:
+    """Stream the IGRA zip until the sounding of ``when``."""
     key = f"{when.year:4d} {when.month:02d} {when.day:02d} {when.hour:02d}"
-    i = 0
-    while i < len(lines):
-        ln = lines[i]
-        if ln.startswith("#"):
-            n = int(ln[32:36].strip() or 0)
-            if ln[13:26] == key:
-                body = lines[i + 1:i + 1 + n]
-
-                def num(s, sc=1.0):
-                    s = s.strip()
-                    try:
-                        v = int(s)
-                    except ValueError:
-                        return np.nan
-                    return np.nan if v in (-9999, -8888) else v * sc
-
-                p, z, t, dpd, rh, wd, ws = ([] for _ in range(7))
-                for b in body:
-                    b = b.ljust(51)
-                    p.append(num(b[9:15], 0.01))
-                    z.append(num(b[16:21]))
-                    t.append(num(b[22:27], 0.1))
-                    rh.append(num(b[28:33], 0.1))
-                    dpd.append(num(b[34:39], 0.1))
-                    wd.append(num(b[40:45]))
-                    ws.append(num(b[46:51], 0.1))
-                t, dpd, rh = np.array(t), np.array(dpd), np.array(rh)
-                td = t - dpd
-                need = ~np.isfinite(td) & np.isfinite(t) & np.isfinite(rh)
-                if need.any():
-                    tt, hh = t[need], np.clip(rh[need], 1, 100)
-                    g = np.log(hh / 100) + 17.625 * tt / (243.04 + tt)
-                    td[need] = 243.04 * g / (17.625 - g)
-                return _profile(p, z, t, td, wd, ws, "NOAA IGRA v2", sid, when)
-            i += 1 + n
-        else:
-            i += 1
+    try:
+        with zipfile.ZipFile(z) as zf, zf.open(zf.namelist()[0]) as fh:
+            lines = io.TextIOWrapper(fh, encoding="utf-8", errors="ignore")
+            for ln in lines:
+                if ln.startswith("#") and ln[13:26] == key:
+                    n = int(ln[32:36].strip() or 0)
+                    return _igra_parse_body([next(lines) for _ in range(n)], sid, when)
+    except (zipfile.BadZipFile, OSError):
+        z.unlink(missing_ok=True)
     return None
+
+
+def _igra_parse_body(body: list[str], sid: str, when: dt.datetime) -> dict | None:
+    def num(s, sc=1.0):
+        s = s.strip()
+        try:
+            v = int(s)
+        except ValueError:
+            return np.nan
+        return np.nan if v in (-9999, -8888) else v * sc
+
+    p, z, t, dpd, rh, wd, ws = ([] for _ in range(7))
+    for b in body:
+        b = b.ljust(51)
+        p.append(num(b[9:15], 0.01))
+        z.append(num(b[16:21]))
+        t.append(num(b[22:27], 0.1))
+        rh.append(num(b[28:33], 0.1))
+        dpd.append(num(b[34:39], 0.1))
+        wd.append(num(b[40:45]))
+        ws.append(num(b[46:51], 0.1))
+    t, dpd, rh = np.array(t), np.array(dpd), np.array(rh)
+    td = t - dpd
+    need = ~np.isfinite(td) & np.isfinite(t) & np.isfinite(rh)
+    if need.any():
+        tt, hh = t[need], np.clip(rh[need], 1, 100)
+        g = np.log(hh / 100) + 17.625 * tt / (243.04 + tt)
+        td[need] = 243.04 * g / (17.625 - g)
+    return _profile(p, z, t, td, wd, ws, "NOAA IGRA v2", sid, when)
 
 
 async def get_obs(sid: str, when: dt.datetime, retry_absent_h: float = 12) -> dict | None:
@@ -232,9 +248,9 @@ async def get_obs(sid: str, when: dt.datetime, retry_absent_h: float = 12) -> di
                                  follow_redirects=True) as c:
         prof = await _wyoming(c, sid, when)
         if prof is None and sid in STATION:
-            text = await _igra_text(c, STATION[sid][1])
-            if text:
-                prof = await asyncio.to_thread(_igra_parse, text, sid, when)
+            z = await _igra_zip(c, STATION[sid][1], when.year)
+            if z:
+                prof = await asyncio.to_thread(_igra_find, z, sid, when)
     p.parent.mkdir(parents=True, exist_ok=True)
     if prof is None:
         ab.write_text("")

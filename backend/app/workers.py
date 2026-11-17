@@ -51,7 +51,9 @@ def render_case_worker(kind: str, data: dict):
         return render_skewt_multi(data["items"], data["title"], data["subtitle"])
     return {"pressure": cases_render.render_pressure, "sequence": cases_render.render_sequence,
             "point": cases_render.render_point,
-            "meteogram": cases_render.render_case_meteogram}[kind](data)
+            "meteogram": cases_render.render_case_meteogram,
+            "atcf_tracks": cases_render.render_atcf_tracks,
+            "atcf_landfall": cases_render.render_atcf_landfall}[kind](data)
 
 
 def render_xsection_worker(sec: dict, meta: dict):

@@ -24,7 +24,7 @@ from .regions import REGIONS  # noqa: E402
 
 warnings.filterwarnings("ignore")
 PC = ccrs.PlateCarree()
-NAMES = {"gfs": "GFS", "ecmwf": "ECMWF IFS", "aifs": "ECMWF AIFS", "icon_eu": "ICON-EU"}
+NAMES = {"gfs": "GFS", "ecmwf": "ECMWF IFS", "aifs": "ECMWF AIFS", "icon_eu": "ICON-EU", "era5": "ERA5"}
 
 
 def _t(s):
@@ -75,6 +75,13 @@ def render_pressure(data: dict) -> bytes:
                 ax.annotate(f"run {rt.day:02d}/{rt:%H}Z (−{leads[r]} h)", xy=(_t(tr[-1]["time"]), tr[-1]["p"]),
                             xytext=(4, 0), textcoords="offset points", fontsize=7, color=cmap(shade),
                             va="center", zorder=4)
+        ob = data.get("observed", {}).get(sysname)
+        if ob:
+            ax.plot([_t(p["time"]) for p in ob], [p["p"] for p in ob], color="#000", lw=2.8, marker="o", ms=4,
+                    zorder=6, label="NHC: best track (observado)")
+            j = int(np.argmin([p["p"] for p in ob]))
+            ax.annotate(f"NHC: {ob[j]['p']:.0f} hPa · {_fmt(_t(ob[j]['time']))}", xy=(0.012, 0.38),
+                        xycoords="axes fraction", fontsize=7.8, color="#000", fontweight="bold")
         fz = data.get("focus", {}).get(sysname)
         if fz:
             ax.axvline(_t(fz), color="#b45309", lw=1.0, ls=":", zorder=2)
@@ -317,4 +324,153 @@ def render_case_meteogram(data: dict) -> bytes:
              "de curto prazo (primeiras horas de cada run de 6 em 6 h)", fontsize=9, color="#1b263b", va="top")
     fig.text(0.93, 0.08 / fig_h, f"Dados: {data['source']} · Forecast Workstation", fontsize=7,
              color="#666", ha="right")
+    return _png(fig)
+
+
+# ------------------------------------------------------------------ NHC / ATCF forecast verification
+PLACES_PT = [(36.98, "Sagres"), (37.95, "Sines"), (38.70, "Lisboa"), (39.36, "Peniche"), (39.60, "Nazaré"),
+             (40.15, "Figueira da Foz"), (40.64, "Aveiro"), (41.15, "Porto"), (41.69, "Viana do Castelo"),
+             (42.88, "Finisterra")]
+
+
+def render_atcf_tracks(data: dict) -> bytes:
+    """data = {storm, name, best: [pts], observed: {lat, lon, time}, tracks: [{base, tech, label,
+    colour, ls, pts, landfall}], extent: [lon0, lon1, lat0, lat1]}"""
+    lon0, lon1, lat0, lat1 = data["extent"]
+    proj = ccrs.LambertConformal(central_longitude=(lon0 + lon1) / 2, central_latitude=(lat0 + lat1) / 2,
+                                 standard_parallels=(lat0 + 3, lat1 - 3))
+    # figure height from the map's aspect ratio (map 66 % of the width)
+    xs, ys = zip(*[proj.transform_point(lo, la, PC) for lo, la in
+                   ((lon0, lat0), (lon1, lat0), (lon0, lat1), (lon1, lat1), ((lon0 + lon1) / 2, lat1))])
+    asp = (max(ys) - min(ys)) / (max(xs) - min(xs))
+    fig_h = min(11.5, max(6.5, 14.5 * 0.66 * asp + 1.6))
+    fig = Figure(figsize=(14.5, fig_h), dpi=110, facecolor="white")
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes([0.03, 0.5 / fig_h, 0.66, 1 - 1.6 / fig_h], projection=proj)
+    ax.set_extent([lon0, lon1, lat0, lat1], PC)
+    ax.add_feature(cfeature.LAND.with_scale("50m"), facecolor="#efe9dc", edgecolor="none", zorder=0)
+    ax.add_feature(cfeature.OCEAN.with_scale("50m"), facecolor="#dbe9f4", edgecolor="none", zorder=0)
+    ax.coastlines("50m", lw=0.7, color="#333", zorder=2)
+    ax.add_feature(cfeature.BORDERS.with_scale("50m"), lw=0.5, edgecolor="#555", zorder=2)
+    gl = ax.gridlines(draw_labels=True, lw=0.4, color="#999", alpha=0.6, x_inline=False, y_inline=False)
+    gl.top_labels = gl.right_labels = False
+    gl.xlabel_style = gl.ylabel_style = {"size": 8}
+    bases = sorted({tr["base"] for tr in data["tracks"]})
+    shades = {b: c for b, c in zip(bases, _shades(len(bases)))}
+    for tr in data["tracks"]:
+        pts = tr["pts"]
+        col = tr["colour"] if len(bases) == 1 else shades[tr["base"]]
+        ls = tr["ls"] if len(bases) == 1 else ("-" if tr["tech"] == "OFCL" else "--")
+        ax.plot([p["lon"] for p in pts], [p["lat"] for p in pts], color=col, lw=1.8 if tr["tech"] == "OFCL" else 1.2,
+                ls=ls, transform=PC, zorder=4)
+        lf = tr.get("landfall")
+        if lf:
+            ax.plot(lf["lon"], lf["lat"], marker="X", ms=9, mec="white", mew=0.8, color=col, transform=PC, zorder=6)
+    b = data["best"]
+    ax.plot([p["lon"] for p in b], [p["lat"] for p in b], color="#000", lw=3.2, transform=PC, zorder=5)
+    for p in b:
+        if p["time"].hour in (0, 12):
+            ax.plot(p["lon"], p["lat"], "o", ms=5, color="#000", transform=PC, zorder=6)
+            if lon0 < p["lon"] < lon1 and lat0 < p["lat"] < lat1:
+                ax.text(p["lon"] + 0.25, p["lat"] + 0.25, f"{p['time'].day:02d}/{p['time']:%H}Z {p['vmax']} kt",
+                        transform=PC, fontsize=7.5, fontweight="bold", zorder=7,
+                        path_effects=[pe.withStroke(linewidth=2.5, foreground="white")])
+    o = data.get("observed")
+    if o:
+        ax.plot(o["lon"], o["lat"], marker="*", ms=20, color="#facc15", mec="#000", mew=1.2, transform=PC, zorder=8)
+    # legend / info
+    X, dy = 0.71, 0.27 / fig_h
+    y = 1 - 1.15 / fig_h
+    fig.text(X, y, "Trajetória observada (best track do NHC)", fontsize=9, fontweight="bold", va="top")
+    y -= dy
+    if o:
+        fig.text(X, y, f"★ chegada a terra: {o['lat']:.2f}°N {abs(o['lon']):.2f}°W, "
+                 f"{o['time'].day:02d}/{o['time']:%m} {o['time']:%H:%M} UTC", fontsize=8.5, va="top")
+        y -= 1.4 * dy
+    if len(bases) == 1:
+        fig.text(X, y, f"Previsões feitas a {_fmt(bases[0])} (✕ = chegada a terra)", fontsize=9,
+                 fontweight="bold", va="top")
+        y -= dy
+        seen = set()
+        for tr in data["tracks"]:
+            if tr["tech"] in seen:
+                continue
+            seen.add(tr["tech"])
+            lf = tr.get("landfall")
+            txt = f"{tr['label']}: " + (f"{lf['lat']:.2f}°N {abs(lf['lon']):.2f}°W · {lf['time'].day:02d} "
+                                         f"{lf['time']:%H:%M}" if lf else "sem chegada a terra")
+            fig.text(X, y, "━━ ", color=tr["colour"], fontsize=9, va="top", fontweight="bold")
+            fig.text(X + 0.03, y, txt, fontsize=8, va="top")
+            y -= dy
+    else:
+        fig.text(X, y, "Previsões por hora de emissão", fontsize=9, fontweight="bold", va="top")
+        y -= dy
+        fig.text(X, y, "✕ = chegada a terra prevista", fontsize=8, va="top", color="#444")
+        y -= dy
+        for bb in bases:
+            ofcl = next((t for t in data["tracks"] if t["base"] == bb and t["tech"] == "OFCL"), None)
+            lf = ofcl.get("landfall") if ofcl else None
+            lead = (o["time"] - bb).total_seconds() / 3600 if o else 0
+            txt = f"{_fmt(bb)} (−{lead:.0f} h)" + (f" · NHC: {lf['lat']:.2f}°N" if lf else "")
+            fig.text(X, y, "━━ ", color=shades[bb], fontsize=9, va="top", fontweight="bold")
+            fig.text(X + 0.03, y, txt, fontsize=8, va="top")
+            y -= dy
+        y -= 0.3 * dy
+        fig.text(X, y, "contínuo = NHC (oficial) · tracejado = GFS", fontsize=8, va="top", color="#444")
+    fig.text(0.03, 1 - 0.25 / fig_h, f"{data['name']}: trajetória observada e previsões do NHC e dos modelos",
+             fontsize=14, fontweight="bold", color="#0d1b2a", va="top")
+    fig.text(0.03, 1 - 0.6 / fig_h, data.get("subtitle", ""), fontsize=9.5, color="#1b263b", va="top")
+    fig.text(0.97, 0.015, f"Dados: NHC/NOAA, arquivo ATCF ({data['storm']}) · Forecast Workstation",
+             fontsize=7.5, color="#666", ha="right")
+    return _png(fig)
+
+
+def _shades(n):
+    from matplotlib import colormaps
+    cm = colormaps["plasma"]
+    return [cm(0.08 + 0.8 * i / max(1, n - 1)) for i in range(n)]
+
+
+def render_atcf_landfall(data: dict) -> bytes:
+    """data = {name, storm, observed, rows: [{base, tech, lead_h, lat, time}], techs: {tech: (label, colour, ls)}}"""
+    o = data["observed"]
+    fig = Figure(figsize=(14.5, 8.4), dpi=110, facecolor="white")
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes([0.07, 0.36, 0.72, 0.52])
+    ax2 = fig.add_axes([0.07, 0.08, 0.72, 0.20], sharex=ax)
+    rows = data["rows"]
+    for tech, (label, col, ls) in data["techs"].items():
+        rs = sorted([r for r in rows if r["tech"] == tech], key=lambda r: -r["lead_h"])
+        if not rs:
+            continue
+        lw = 2.6 if tech == "OFCL" else 1.4
+        ax.plot([-r["lead_h"] for r in rs], [r["lat"] for r in rs], color=col, ls=ls, lw=lw, marker="o",
+                ms=4 if tech != "OFCL" else 6, label=label, zorder=5 if tech == "OFCL" else 3)
+        ax2.plot([-r["lead_h"] for r in rs], [(r["time"] - o["time"]).total_seconds() / 3600 for r in rs],
+                 color=col, ls=ls, lw=lw, marker="o", ms=3.5, zorder=5 if tech == "OFCL" else 3)
+    ax.axhline(o["lat"], color="#b45309", lw=2, zorder=2)
+    ax.text(0.005, o["lat"] + 0.05, f"observado: {o['lat']:.2f}°N", transform=ax.get_yaxis_transform(),
+            color="#b45309", fontsize=9, fontweight="bold", va="bottom")
+    lats = [r["lat"] for r in rows if r["tech"] in data["techs"]] + [o["lat"]]
+    lo, hi = min(lats) - 0.4, max(lats) + 0.4
+    ax.set_ylim(lo, hi)
+    for la, name in PLACES_PT:
+        if lo < la < hi:
+            ax.axhline(la, color="#000", alpha=0.08, lw=0.8, zorder=1)
+            ax.text(1.005, la, name, transform=ax.get_yaxis_transform(), fontsize=8, va="center", color="#444")
+    ax.set_ylabel("Latitude prevista da chegada a terra (°N)", fontsize=9)
+    ax.grid(True, axis="x", alpha=0.25)
+    ax.legend(loc="upper left", fontsize=8, ncol=3, framealpha=0.92)
+    ax2.axhline(0, color="#b45309", lw=1.5)
+    ax2.set_ylabel("Erro da hora (h)", fontsize=9)
+    ax2.set_xlabel("Antecedência em relação à chegada a terra observada (h)", fontsize=9)
+    ax2.grid(True, alpha=0.25)
+    ax.tick_params(labelbottom=False)
+    fig.text(0.07, 0.965, f"{data['name']}: onde e quando as previsões punham a chegada a terra",
+             fontsize=14, fontweight="bold", color="#0d1b2a", va="top")
+    fig.text(0.07, 0.93, f"Observado (best track do NHC): {o['lat']:.2f}°N {abs(o['lon']):.2f}°W às "
+             f"{o['time']:%H:%M} UTC de {o['time'].day:02d}/{o['time']:%m}/{o['time']:%Y} · cada ponto é uma "
+             f"previsão, situada pela antecedência", fontsize=9.5, color="#1b263b", va="top")
+    fig.text(0.97, 0.015, f"Dados: NHC/NOAA, arquivo ATCF ({data['storm']}) · Forecast Workstation",
+             fontsize=7.5, color="#666", ha="right")
     return _png(fig)

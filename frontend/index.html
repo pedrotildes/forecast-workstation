@@ -298,6 +298,9 @@
           <option value="1">1 dia antes</option><option value="2" selected>2 dias antes</option><option value="3">3 dias antes</option>
         </select></label>
       </div>
+      <label class="fld">Ciclone tropical do NHC (opcional) <input id="ev-atcf" placeholder="ex.: AL132018"></label>
+      <p class="hint">Um evento que já acabou há mais de 10 dias é histórico: usa a reanálise ERA5 e as análises
+      do GFS (arquivo da NOAA), as radiossondas e, se indicado, as trajetórias observadas e previstas do NHC.</p>
       <label class="fld">Notas <textarea id="ev-notes" rows="2"></textarea></label>
       <button id="ev-create" class="primary">Criar e arquivar</button>
     </section>
@@ -327,6 +330,8 @@
         <button data-p="sounding">Sondagens (radiossonda + modelos)</button>
         <button data-p="meteogram">Meteograma do caso</button>
         <button data-p="xsection">Corte vertical (linha A→B)</button>
+        <button data-p="atcf" class="atcf-only">Previsões NHC: trajetórias</button>
+        <button data-p="atcf_lf" class="atcf-only">Previsões NHC: chegada a terra</button>
         <button data-p="systems">Sistemas a seguir…</button>
       </div>
     </section>
@@ -372,6 +377,12 @@
       <div class="preset-list xs-kinds" id="xs-kinds-case"></div>
       <p class="hint">As linhas «pelo centro» acompanham o sistema: ao mudar de hora, o corte volta a passar
       pelo centro analisado nessa hora. ✓ = análise com todos os níveis no arquivo.</p>
+    </section>
+    <section class="case-only" data-p="atcf">
+      <h3>Previsões emitidas</h3>
+      <select id="case-atcf-base"></select>
+      <p class="hint">Trajetória observada (best track do NHC) a preto; ✕ = chegada a terra prevista;
+      ★ = chegada a terra observada. Dados do arquivo ATCF do NHC (previsões oficiais e dos modelos).</p>
     </section>
     <section class="case-only" data-p="systems">
       <h3>Sistemas (sementes do seguimento)</h3>

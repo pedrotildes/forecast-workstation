@@ -28,6 +28,9 @@ originais (GRIB2):
   • Casos: análise de um evento arquivado — trajetórias das depressões,
     pressão central, sequência sinótica, totais de chuva e rajadas,
     sondagens observadas (radiossondas) vs. modelos, meteogramas e cortes.
+  • Eventos históricos (anos anteriores): reanálise ERA5 do ECMWF,
+    análises do GFS, radiossondas e, para ciclones tropicais, a trajetória
+    observada e as previsões do NHC (onde previam a chegada a terra).
 
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).

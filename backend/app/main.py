@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import re
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -27,7 +28,7 @@ from .workers import (compare_sounding_worker, render_map_worker, render_meteogr
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "16"
+RENDER_VERSION = "17"
 
 
 @app.middleware("http")
@@ -604,7 +605,7 @@ async def live_layers():
 # ---------------------------------------------------------------- events (archive)
 def _event_view(ev: dict) -> dict:
     from . import archive
-    return {**ev, "radar_frames": len(archive.radar_frames(ev["id"])),
+    return {**ev, "radar_frames": len(archive.radar_frames(ev["id"])), "historical": archive.is_historical(ev),
             "start_label": fmt_time(archive.parse_t(ev["start"])),
             "end_label": fmt_time(archive.parse_t(ev["end"]))}
 
@@ -626,7 +627,18 @@ async def events_create(body: dict):
         raise HTTPException(400, "o fim tem de ser depois do início")
     if (t1 - t0).days > 14:
         raise HTTPException(400, "um evento pode ter no máximo 14 dias")
-    models = [m for m in body.get("models", []) if m in MODELS] or ["gfs", "ecmwf"]
+    historical = t1 < archive._utcnow() - dt.timedelta(days=archive.HISTORICAL_DAYS)
+    models = [m for m in body.get("models", []) if m in MODELS]
+    if historical:              # past events: reanalysis + archived analyses only
+        models = [m for m in models if m in ("era5", "gfs")] or ["era5", "gfs"]
+    models = models or ["gfs", "ecmwf"]
+    atcf_id = (body.get("atcf") or "").strip().upper() or None
+    if atcf_id:
+        from .atcf import valid_id
+        try:
+            atcf_id = valid_id(atcf_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
     region = body.get("region", "nea")
     if region not in REGIONS:
         raise HTTPException(400, "região desconhecida")
@@ -634,7 +646,7 @@ async def events_create(body: dict):
     if not name:
         raise HTTPException(400, "indique um nome")
     ev = archive.create_event(name, t0.isoformat(), t1.isoformat(), models, region,
-                              float(body.get("lead_days", 2)), body.get("notes", ""))
+                              float(body.get("lead_days", 2)), body.get("notes", ""), atcf_id)
     asyncio.create_task(archive.archive_event(ev["id"]))
     return _event_view(ev)
 
@@ -764,6 +776,12 @@ async def case_pressure_png(eid: str, models: str = "gfs,ecmwf,aifs,icon_eu", fc
                 focus[name] = fz.isoformat() if fz else None
         data = {"event": ev["name"], "tracks": tracks, "forecasts": fcs, "fc_model": fc,
                 "leads": leads, "focus": focus}
+        if ev.get("atcf"):
+            from .cases import atcf_best_in
+            bt = atcf_best_in(ev)
+            if bt and tracks:
+                first = next(iter(tracks))
+                data["observed"] = {first: [{"time": p["time"].isoformat(), "p": p["mslp"]} for p in bt if p["mslp"]]}
         try:
             return await asyncio.get_running_loop().run_in_executor(
                 POOL, render_case_worker, "pressure", data)
@@ -876,6 +894,54 @@ async def case_meteogram_png(eid: str, lat: float, lon: float, model: str = "ecm
         except ValueError as e:
             raise HTTPException(404, str(e)) from None
     return await _cached_png(_case_key(ev, "meteogram", model, round(lat, 3), round(lon, 3), name), produce)
+
+
+@app.get("/api/cases/{eid}/atcf.json")
+async def case_atcf(eid: str):
+    """NHC forecast base times and the observed landfall of the event's tropical cyclone."""
+    from . import archive, atcf
+    ev = _case_event(eid)
+    if not ev.get("atcf"):
+        raise HTTPException(404, "este evento não tem ciclone do NHC associado")
+    obs = atcf.landfall(atcf.best_track(ev["atcf"]), after=archive.parse_t(ev["start"]))
+    ref = obs["time"] if obs else archive.parse_t(ev["end"])
+    bases = [b for b in atcf.bases(ev["atcf"]) if ref - 96 * dt.timedelta(hours=1) <= b < ref]
+    return {"storm": ev["atcf"], "observed": obs and {**obs, "time": obs["time"].isoformat()},
+            "bases": [{"base": b.strftime("%Y%m%d%H"), "label": fmt_time(b),
+                       "lead": round((ref - b).total_seconds() / 3600)} for b in bases]}
+
+
+@app.get("/api/cases/{eid}/atcf_tracks.png")
+async def case_atcf_tracks(eid: str, base: str = "all"):
+    from .cases import atcf_tracks_data
+    ev = _case_event(eid)
+    if not ev.get("atcf"):
+        raise HTTPException(404, "este evento não tem ciclone do NHC associado")
+    if base != "all" and not re.fullmatch(r"\d{10}", base):
+        raise HTTPException(400, "base inválida")
+
+    async def produce():
+        data = await asyncio.to_thread(atcf_tracks_data, ev, base)
+        if not data["tracks"]:
+            raise HTTPException(404, "sem previsões do NHC para esta hora")
+        return await asyncio.get_running_loop().run_in_executor(POOL, render_case_worker, "atcf_tracks", data)
+    return await _cached_png(_case_key(ev, "atcf_tracks", base), produce)
+
+
+@app.get("/api/cases/{eid}/atcf_landfall.png")
+async def case_atcf_landfall(eid: str):
+    from .cases import atcf_landfall_data
+    ev = _case_event(eid)
+    if not ev.get("atcf"):
+        raise HTTPException(404, "este evento não tem ciclone do NHC associado")
+
+    async def produce():
+        try:
+            data = await asyncio.to_thread(atcf_landfall_data, ev)
+        except FieldUnavailable as e:
+            raise HTTPException(404, str(e)) from None
+        return await asyncio.get_running_loop().run_in_executor(POOL, render_case_worker, "atcf_landfall", data)
+    return await _cached_png(_case_key(ev, "atcf_landfall"), produce)
 
 
 @app.get("/api/cases/{eid}/xtimes")

@@ -1,9 +1,10 @@
 from .base import Domain, FieldUnavailable, Key, Model
 from .ecmwf import ECMWF_AIFS, ECMWF_IFS
 from .gfs import GFS
+from .era5 import ERA5
 from .icon import ICON_EU
 
-MODELS: dict[str, Model] = {m.id: m for m in (GFS(), ECMWF_IFS(), ECMWF_AIFS(), ICON_EU())}
+MODELS: dict[str, Model] = {m.id: m for m in (GFS(), ECMWF_IFS(), ECMWF_AIFS(), ICON_EU(), ERA5())}
 
 
 def get_model(model_id: str) -> Model:

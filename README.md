@@ -21,6 +21,7 @@ e instala `requirements.txt`.
 | ECMWF IFS | ECMWF Open Data (pedidos HTTP por intervalo de bytes via `.index`), espelho AWS | 0.25°, 13 níveis | 00/12Z +360 h; 06/18Z +90 h |
 | ECMWF AIFS | idem (`aifs-single`) | 0.25°, 13 níveis | 4 runs/dia, +360 h, passo 6 h |
 | ICON-EU (DWD) | opendata.dwd.de (um ficheiro `.grib2.bz2` por campo/nível/passo) | 0.0625° (~7 km), 18 níveis | 00/06/12/18Z +120 h (horário até +78 h); 03/09/15/21Z +48 h |
+| ERA5 (reanálise ECMWF/C3S) | NCAR RDA ds633.0 por OPeNDAP (recorte por região, nível e hora), só para eventos históricos | 0.25°, 27 níveis até 100 hPa | horária (análises de 3 em 3 h no arquivo) |
 
 O ICON-EU é **regional** (23,5° W–62,5° E, 29,5° N–70,5° N): cobre Portugal continental e a
 Madeira, mas não os Açores nem as Canárias — a app avisa quando um ponto ou região fica fora.
@@ -160,6 +161,24 @@ Recuperação posterior: GFS (AWS `noaa-gfs-bdp-pds`; NOMADS ~10 dias) e ECMWF I
 ```bash
 cd backend && ../.venv/bin/python -m app.archive
 ```
+
+### Eventos históricos
+
+Um evento que já acabou há mais de 10 dias é **histórico**: os servidores de previsão já não
+têm os dados, por isso o arquivo é preenchido a partir de outras fontes, sem conta:
+
+- **ERA5** (`app/era5.py`): reanálise do ECMWF lida da cópia do NCAR RDA (ds633.0) por OPeNDAP,
+  só para a caixa do evento — 27 níveis (gh, T, HR, u, v, ω) de 3 em 3 h, superfície horária
+  (MSL, pressão à superfície, vento a 10 m, T2m, Td2m, nebulosidade, água precipitável, CAPE) e
+  precipitação/rajadas das previsões curtas (06/18 UTC), arrumadas como a «cadeia de curto prazo».
+  Aparece como modelo **ERA5 (reanálise)** em todos os separadores.
+- **Análises do GFS** (`app/gfs_hist.py`): ficheiros `gfsanl_4` (0,5°, 6 em 6 h) do arquivo da
+  NOAA/NCEI; as previsões antigas do GFS não estão disponíveis em acesso aberto.
+- **NHC ATCF** (`app/atcf.py`): para ciclones tropicais (ex.: `AL132018`), a trajetória observada
+  (best track) e as previsões oficiais e dos modelos; a chegada a terra é o primeiro ponto em terra
+  (Natural Earth 50 m). No separador Casos: «Previsões NHC: trajetórias» e «… chegada a terra».
+- **Radiossondas** antigas: Univ. Wyoming (também com o número WMO antigo da estação, p. ex.
+  Lisboa 08579) e NOAA IGRA v2 (ficheiro do período completo).
 
 ## Casos (análise de casos particulares)
 

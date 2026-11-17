@@ -242,6 +242,8 @@ async def archive_event(eid: str, log=print) -> dict:
     if ev is None:
         raise KeyError(eid)
     box = REGIONS[ev.get("region", "nea")].download_domain
+    if is_historical(ev):
+        return await archive_historical(ev, (box.lon0, box.lon1, box.lat0, box.lat1), log)
     dom = Domain(box.lon0, box.lon1, box.lat0, box.lat1)
     stats = {}
 
@@ -446,8 +448,16 @@ def delete_event(eid: str, delete_fields: bool = True) -> None:
                 shutil.rmtree(rdir, ignore_errors=True)
 
 
+HISTORICAL_DAYS = 10      # events that ended longer ago than this come from the archives
+
+
+def is_historical(ev: dict) -> bool:
+    """Too old for the forecast servers: filled from reanalysis/analysis archives instead."""
+    return bool(ev.get("historical")) or parse_t(ev["end"]) < _utcnow() - dt.timedelta(days=HISTORICAL_DAYS)
+
+
 def create_event(name: str, start: str, end: str, models: list[str], region: str = "nea",
-                 lead_days: float = 2, notes: str = "") -> dict:
+                 lead_days: float = 2, notes: str = "", atcf: str | None = None) -> dict:
     evs = load_events()
     eid = slug(name)
     base, k = eid, 2
@@ -457,9 +467,64 @@ def create_event(name: str, start: str, end: str, models: list[str], region: str
           "end": parse_t(end).isoformat(), "models": models, "region": region,
           "lead_days": lead_days, "notes": notes,
           "created": _utcnow().isoformat(), "progress": {}}
+    if atcf:
+        ev["atcf"] = atcf
+    if parse_t(end) < _utcnow() - dt.timedelta(days=HISTORICAL_DAYS):
+        ev["historical"] = True
     evs.append(ev)
     save_events(evs)
     return ev
+
+
+_HIST_RUNNING: set[str] = set()
+
+
+async def archive_historical(ev: dict, box, log=print) -> dict:
+    """Historical event: ERA5 reanalysis, GFS analyses (NOAA archive), NHC ATCF tracks and
+    radiosondes. Each part is skipped when already archived; safe to call again."""
+    eid = ev["id"]
+    if eid in _HIST_RUNNING:
+        return ev.get("progress", {})
+    _HIST_RUNNING.add(eid)
+    prog = dict(ev.get("progress") or {})
+
+    def mark(part, **kw):
+        prog[part] = {**prog.get(part, {}), **kw}
+        update_event(eid, progress=prog, updated=_utcnow().isoformat())
+    try:
+        models = ev.get("models", [])
+        if "era5" in models:
+            mark("era5", estado="a importar")
+            try:
+                from .era5 import import_event as era5_import
+                n = await era5_import(ev, box, log)
+                mark("era5", estado="concluído", campos=sum(n.values()))
+            except Exception as e:  # noqa: BLE001
+                mark("era5", estado=f"erro: {e}")
+                log(f"[era5] {eid}: {e}")
+        if "gfs" in models:
+            mark("gfs", estado="a importar")
+            try:
+                from .gfs_hist import import_event as gfs_import
+                n = await gfs_import(ev, box, log)
+                mark("gfs", estado="concluído", campos=n)
+            except Exception as e:  # noqa: BLE001
+                mark("gfs", estado=f"erro: {e}")
+                log(f"[gfs-arquivo] {eid}: {e}")
+        if ev.get("atcf"):
+            from . import atcf
+            ok = await atcf.fetch(ev["atcf"], log)
+            mark("atcf", estado="concluído" if ok else "incompleto", ciclone=ev["atcf"])
+        try:
+            from .obs import capture_event_obs
+            n = await capture_event_obs(ev, log)
+            mark("radiossondas", estado="concluído", sondagens=n)
+        except Exception as e:  # noqa: BLE001
+            log(f"[obs] {eid}: {e}")
+        update_event(eid, progress=prog, updated=_utcnow().isoformat(), size=event_size(eid))
+        return prog
+    finally:
+        _HIST_RUNNING.discard(eid)
 
 
 async def archiver_loop(log=print) -> None:

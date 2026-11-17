@@ -36,7 +36,35 @@ DEFAULT_SYSTEMS = {
 
 
 def systems(ev: dict) -> list[dict]:
-    return ev.get("systems") or DEFAULT_SYSTEMS.get(ev["id"], [])
+    if ev.get("systems"):
+        return ev["systems"]
+    if ev["id"] in DEFAULT_SYSTEMS:
+        return DEFAULT_SYSTEMS[ev["id"]]
+    if ev.get("atcf"):
+        return atcf_systems(ev)
+    return []
+
+
+def atcf_systems(ev: dict) -> list[dict]:
+    """Seed from the NHC best track (point nearest the middle of the event); the forecast
+    reference time is the observed landfall, when there is one."""
+    from . import atcf
+    try:
+        bt = atcf.best_track(ev["atcf"])
+    except (ValueError, OSError):
+        return []
+    t0, t1 = archive.parse_t(ev["start"]), archive.parse_t(ev["end"])
+    inside = [p for p in bt if t0 <= p["time"] <= t1]
+    if not inside:
+        return []
+    mid = t0 + (t1 - t0) / 2
+    p = min(inside, key=lambda q: abs(q["time"] - mid))
+    name = ev["name"].split()[-1]
+    sysd = {"name": name, "lat": p["lat"], "lon": p["lon"], "time": p["time"].isoformat()}
+    lf = atcf.landfall(bt, after=t0)
+    if lf and lf["time"] <= t1:
+        sysd["focus"] = lf["time"].replace(minute=0, second=0, microsecond=0).isoformat()
+    return [sysd]
 
 
 def _domain(model=None):
@@ -417,7 +445,7 @@ async def point_chain(model, ev, lat, lon) -> dict:
 async def all_tracks(ev, models: list[str]) -> dict:
     """{system: {model: track}} — ECMWF (else GFS) first, used as reference for the others."""
     out = {}
-    order = [m for m in ("ecmwf", "gfs", "aifs", "icon_eu") if m in models]
+    order = [m for m in ("era5", "ecmwf", "gfs", "aifs", "icon_eu") if m in models]
     for sysd in systems(ev):
         tracks, ref = {}, None
         for mid in order:
@@ -441,7 +469,7 @@ def _label(t_iso: str) -> str:
 
 
 TRACK_STYLE = {"ecmwf": ("#dc2626", "o"), "gfs": ("#2563eb", "s"), "aifs": ("#16a34a", "D"),
-               "icon_eu": ("#9333ea", "^")}
+               "icon_eu": ("#9333ea", "^"), "era5": ("#0f766e", "h")}
 
 
 async def build_track_job(ev, models: list[str], fc_model: str | None, region="nea") -> dict:
@@ -450,7 +478,7 @@ async def build_track_job(ev, models: list[str], fc_model: str | None, region="n
     from .maps.styles import Fill, _interp
     tracks = await all_tracks(ev, models)
     # background: minimum MSLP over the event (reference model analyses)
-    refm = MODELS["ecmwf" if "ecmwf" in models else models[0]]
+    refm = MODELS[next((m for m in ("era5", "ecmwf") if m in models), models[0])]
     mins, grid = None, None
     for t in analysis_times(refm, ev):
         f = await analysis_field(refm, t, ("msl", 0))
@@ -482,6 +510,11 @@ async def build_track_job(ev, models: list[str], fc_model: str | None, region="n
                 pts.append((p["lon"], p["lat"], lab))
             layers.append({"type": "track", "points": pts, "color": col, "marker": mk,
                            "label": f"{sysname} · {MODELS[mid].name} (análises)", "lw": 2.0})
+    if ev.get("atcf"):
+        bt = atcf_best_in(ev)
+        if bt:
+            layers.append({"type": "track", "points": [(p["lon"], p["lat"], None) for p in bt], "color": "#000000",
+                           "marker": "o", "lw": 3.0, "ms": 3.5, "label": f"NHC: trajetória observada ({ev['atcf']})"})
     if fc_model and fc_model in MODELS:
         fm = MODELS[fc_model]
         for sysname, per in tracks.items():
@@ -645,3 +678,65 @@ async def case_meteogram_data(ev, model_id: str, lat: float, lon: float, name: s
             "profile": prof, "chain": chain,
             "obs": {"station": obs.station_info(sid)["name"] if sid else None,
                     "km": round(dkm), "times": obs_times}}
+
+
+# ================================================================== NHC ATCF (tropical cyclones)
+def atcf_extent(ev) -> list[float]:
+    from . import atcf
+    t0, t1 = archive.parse_t(ev["start"]), archive.parse_t(ev["end"])
+    pts = [p for p in atcf.best_track(ev["atcf"]) if t0 - 12 * H <= p["time"] <= t1]
+    lons = [p["lon"] for p in pts] + [-10.0]
+    lats = [p["lat"] for p in pts] + [38.0]
+    return [max(-80.0, min(lons) - 3), min(40.0, max(lons) + 7), max(5.0, min(lats) - 3), min(70.0, max(lats) + 5)]
+
+
+def atcf_tracks_data(ev, base: str = "all") -> dict:
+    """Data for the forecast-tracks map: one base time (all models) or the evolution of the
+    NHC and GFS forecasts every 12 h before the landfall."""
+    from . import atcf
+    storm = ev["atcf"]
+    t0, t1 = archive.parse_t(ev["start"]), archive.parse_t(ev["end"])
+    best = [p for p in atcf.best_track(storm) if t0 - 24 * H <= p["time"] <= t1 + 24 * H]
+    obs = atcf.landfall(atcf.best_track(storm), after=t0)
+    fc = atcf.forecasts(storm)
+    ref = obs["time"] if obs else t1
+    if base == "all":
+        bases = [b for b in atcf.bases(storm) if b.hour in (0, 12) and ref - 60 * H <= b < ref]
+        techs = ["OFCL", "AVNO"]
+        sub = "Previsões do NHC (contínuo) e do GFS (tracejado), emitidas de 12 em 12 h antes da chegada a terra"
+    else:
+        bases = [dt.datetime.strptime(base, "%Y%m%d%H")]
+        techs = list(atcf.TECHS)
+        lead = (ref - bases[0]).total_seconds() / 3600
+        sub = f"Previsões emitidas a {_fmt(bases[0])}, {lead:.0f} h antes da chegada a terra observada"
+    tracks = []
+    for b in bases:
+        for t in techs:
+            if (b, t) in fc:
+                lab, col, ls = atcf.TECHS[t]
+                tracks.append({"base": b, "tech": t, "label": lab, "colour": col, "ls": ls, "pts": fc[(b, t)],
+                               "landfall": atcf.landfall(fc[(b, t)])})
+    return {"storm": storm, "name": ev["name"], "best": best, "observed": obs, "tracks": tracks,
+            "extent": atcf_extent(ev), "subtitle": sub}
+
+
+def atcf_landfall_data(ev, max_lead: float = 72) -> dict:
+    from . import atcf
+    storm = ev["atcf"]
+    t = atcf.landfall_table(storm, start=archive.parse_t(ev["start"]))
+    if not t["observed"]:
+        raise FieldUnavailable("a trajetória observada não chega a terra dentro do evento")
+    rows = [r for r in t["rows"] if r["lead_h"] <= max_lead]
+    used = {r["tech"] for r in rows}
+    techs = {k: v for k, v in atcf.TECHS.items() if k in used and k != "HCCA"}
+    return {"name": ev["name"], "storm": storm, "observed": t["observed"], "rows": rows, "techs": techs}
+
+
+def atcf_best_in(ev, margin_h: int = 0) -> list[dict]:
+    """NHC best-track points inside the event window (times as datetimes)."""
+    from . import atcf
+    t0, t1 = archive.parse_t(ev["start"]), archive.parse_t(ev["end"])
+    try:
+        return [p for p in atcf.best_track(ev["atcf"]) if t0 - margin_h * H <= p["time"] <= t1 + margin_h * H]
+    except (ValueError, OSError):
+        return []

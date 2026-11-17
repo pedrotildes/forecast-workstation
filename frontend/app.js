@@ -20,7 +20,7 @@ const PLACES = [
   ["Madrid", 40.42, -3.70], ["Barcelona", 41.39, 2.17], ["Sevilha", 37.39, -5.98],
   ["A Corunha", 43.36, -8.41], ["Valência", 39.47, -0.38], ["Bordéus", 44.84, -0.58],
 ];
-const MODEL_COLORS = { gfs: "#3b82f6", ecmwf: "#ef4444", aifs: "#22c55e", icon_eu: "#a855f7" };
+const MODEL_COLORS = { gfs: "#3b82f6", ecmwf: "#ef4444", aifs: "#22c55e", icon_eu: "#a855f7", era5: "#14b8a6" };
 
 const S = {
   tab: "maps", model: "gfs", models: [], runs: [], run: null, steps: [], idx: 0,
@@ -118,6 +118,8 @@ function caseUrl() {
       : { time: c.time || "", lat: S.lat, lon: S.lon, name: S.place || "", models: ms }],
     meteogram: ["meteogram.png", { model: c.model, lat: S.lat, lon: S.lon, name: S.place || "" }],
     xsection: ["xsection.png", { model: c.model, time: c.xtime || "", ...xsQuery() }],
+    atcf: ["atcf_tracks.png", { base: c.atcfBase || "all" }],
+    atcf_lf: ["atcf_landfall.png", {}],
   }[c.product];
   if (c.product === "xsection" && !c.xtime) return [];
   if (c.product === "sounding" && !c.time) return [];
@@ -705,6 +707,7 @@ function renderEventPanel() {
   const e = EV.list.find((x) => x.id === EV.sel);
   const box = $("#ev-panel");
   if (!e) { box.innerHTML = `<h2>Eventos</h2><p class="sub">Crie um evento na barra lateral para arquivar uma situação meteorológica.</p>`; return; }
+  if (e.historical) { renderHistoricalPanel(e, box); return; }
   const rows = (e.models || []).map((m) => {
     const p = (e.progress || {})[m];
     const name = `<td style="color:${MODEL_COLORS[m] || "#ccc"}"><b>${modelName(m)}</b></td>`;
@@ -732,7 +735,39 @@ function renderEventPanel() {
   $$("#ev-panel .ev-actions button").forEach((b) => b.onclick = () => eventAction(e, b.dataset.a));
 }
 
+// historical events: filled once from archives (ERA5, NOAA GFS analyses, NHC ATCF, radiosondes)
+function renderHistoricalPanel(e, box) {
+  const prog = e.progress || {};
+  const parts = [...(e.models || []).map((m) => [m, modelName(m), MODEL_COLORS[m]]),
+    ...(e.atcf ? [["atcf", `NHC ${e.atcf} (trajetórias)`, "#f59e0b"]] : []), ["radiossondas", "Radiossondas", "#ddd"]];
+  const rows = parts.map(([k, name, col]) => {
+    const p = prog[k];
+    const det = !p ? "" : p.campos != null ? `${p.campos} campos` : p.sondagens != null ? `${p.sondagens} sondagens` : "";
+    return `<tr><td style="color:${col || "#ccc"}"><b>${esc(name)}</b></td><td>${p ? esc(p.estado || "") : "à espera…"}</td><td>${det}</td></tr>`;
+  }).join("");
+  box.innerHTML = `<h2>${esc(e.name)}</h2>
+    <div class="sub">${e.start_label} → ${e.end_label} · evento histórico · ${fmtMB(e.size || 0)} em disco</div>
+    ${e.notes ? `<div class="ev-notes">${esc(e.notes)}</div>` : ""}
+    <div class="ev-actions">
+      <button class="primary" data-a="cases">Analisar no separador Casos</button>
+      <button data-a="maps">Abrir mapas do evento</button>
+      <button data-a="archive">Importar / completar agora</button>
+      <button class="danger" data-a="delete">Apagar evento</button>
+    </div>
+    <table><thead><tr><th>Fonte</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="hint">Evento histórico: os servidores de previsão já não têm estes dados, por isso o arquivo usa a reanálise
+    ERA5 do ECMWF (horária, 0,25°, 27 níveis), as análises do GFS guardadas pela NOAA (0,5°, 6 em 6 h), as radiossondas
+    (Univ. Wyoming / IGRA) e, para ciclones tropicais, a trajetória observada e as previsões do NHC (arquivo ATCF).
+    Não há radar nem satélite Meteosat no arquivo.</p>`;
+  $$("#ev-panel .ev-actions button").forEach((b) => b.onclick = () => eventAction(e, b.dataset.a));
+}
+
 async function eventAction(e, a) {
+  if (a === "cases") {
+    S.cs.eid = e.id;
+    await setTab("cases");
+    return;
+  }
   if (a === "archive") {
     await fetch(`/api/events/${e.id}/archive`, { method: "POST" });
     status("Arquivo a atualizar em segundo plano…", "ok");
@@ -773,7 +808,7 @@ function initEvents() {
     const body = {
       name: $("#ev-name").value, start: $("#ev-start").value, end: $("#ev-end").value,
       models: $$("#ev-models input").filter((x) => x.checked).map((x) => x.value),
-      lead_days: +$("#ev-lead").value, notes: $("#ev-notes").value, region: "nea",
+      lead_days: +$("#ev-lead").value, notes: $("#ev-notes").value, region: "nea", atcf: $("#ev-atcf").value,
     };
     const r = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const d = await r.json();
@@ -795,8 +830,37 @@ async function showCases() {
     : `<option value="">(sem eventos — crie um no separador Eventos)</option>`;
   if (!S.cs.eid || !evs.some((e) => e.id === S.cs.eid)) S.cs.eid = evs.length ? evs[evs.length - 1].id : null;
   sel.value = S.cs.eid || "";
+  S.cs.evs = Object.fromEntries(evs.map((e) => [e.id, e]));
+  applyCaseEvent();
   status(S.cs.eid ? "Análise de caso a partir do arquivo do evento" : "Sem eventos arquivados", S.cs.eid ? "ok" : "err");
   setCaseProduct(S.cs.product);
+}
+
+// event-specific defaults: its own models, NHC products only for tropical cyclones
+function applyCaseEvent() {
+  const ev = (S.cs.evs || {})[S.cs.eid];
+  if (!ev) return;
+  const avail = S.models.map((m) => m.id);
+  const ms = (ev.models || []).filter((m) => avail.includes(m));
+  if (ms.length) {
+    S.cs.models = ms;
+    if (!ms.includes(S.cs.model)) { S.cs.model = ms[0]; $("#case-model").value = S.cs.model; }
+    $$("#case-models input").forEach((x) => { x.checked = ms.includes(x.value); });
+  }
+  if (ev.historical) { S.cs.fc = ""; $("#case-fc").value = ""; }
+  $$("#case-products .atcf-only").forEach((b) => b.classList.toggle("hidden", !ev.atcf));
+  if (!ev.atcf && ["atcf", "atcf_lf"].includes(S.cs.product)) S.cs.product = "track";
+  S.cs.atcfBase = "all";
+}
+async function loadCaseAtcf() {
+  const sel = $("#case-atcf-base");
+  try {
+    const d = await api(`/api/cases/${S.cs.eid}/atcf.json`);
+    sel.innerHTML = `<option value="all">Evolução: NHC e GFS de 12 em 12 h</option>` +
+      d.bases.filter((b) => +b.base.slice(8) % 6 === 0).reverse()
+        .map((b) => `<option value="${b.base}">${b.label} (−${b.lead} h) · todos os modelos</option>`).join("");
+    sel.value = S.cs.atcfBase || "all";
+  } catch (e) { sel.innerHTML = ""; }
 }
 
 function setCaseProduct(p) {
@@ -807,6 +871,7 @@ function setCaseProduct(p) {
   $("#img").classList.remove("hidden");
   if (p === "sounding") { loadCaseObs().then(show); return; }
   if (p === "xsection") { loadCaseXs().then(show); return; }
+  if (p === "atcf") { loadCaseAtcf().then(show); return; }
   show();
 }
 
@@ -966,7 +1031,8 @@ function initCases() {
     if (!sel.length) { cb.checked = true; return; }
     S.cs.models = sel; show();
   });
-  $("#case-event").onchange = (e) => { S.cs.eid = e.target.value; setCaseProduct(S.cs.product); };
+  $("#case-event").onchange = (e) => { S.cs.eid = e.target.value; applyCaseEvent(); setCaseProduct(S.cs.product); };
+  $("#case-atcf-base").onchange = (e) => { S.cs.atcfBase = e.target.value; show(); };
   $$("#case-products button").forEach((b) => b.onclick = () => setCaseProduct(b.dataset.p));
   $("#case-fc").onchange = (e) => { S.cs.fc = e.target.value; show(); };
   $("#case-model").onchange = async (e) => {
