@@ -28,7 +28,7 @@ from .workers import (compare_sounding_worker, render_map_worker, render_meteogr
 
 app = FastAPI(title="Forecast Workstation", version=VERSION)
 POOL: ProcessPoolExecutor | None = None
-RENDER_VERSION = "17"
+RENDER_VERSION = "21"
 
 
 @app.middleware("http")
@@ -400,7 +400,7 @@ async def compare_sounding(models: str, valid: str, lat: float, lon: float, name
             snd = await get_profile(m, r, st, lat, lon)
         except FieldUnavailable:
             continue
-        items.append({"model": m.id, "name": m.name, "short": m.name.replace("ECMWF ", ""),
+        items.append({"model": m.id, "name": m.name, "short": m.name.replace("ECMWF ", "").replace(" (reanálise)", ""),
                       "run": r, "step": st, "snd": snd})
     if not items:
         raise HTTPException(404, "sem dados")
@@ -629,8 +629,11 @@ async def events_create(body: dict):
         raise HTTPException(400, "um evento pode ter no máximo 14 dias")
     historical = t1 < archive._utcnow() - dt.timedelta(days=archive.HISTORICAL_DAYS)
     models = [m for m in body.get("models", []) if m in MODELS]
-    if historical:              # past events: reanalysis + archived analyses only
-        models = [m for m in models if m in ("era5", "gfs")] or ["era5", "gfs"]
+    if historical:              # past events: reanalysis + whatever archives reach that date
+        ok = {"era5"} | {m for m, d0 in archive.FORECAST_ARCHIVE.items() if t0 >= d0}
+        if t0 < archive.FORECAST_ARCHIVE["gfs"]:
+            ok.add("gfs")       # analyses from NCEI
+        models = [m for m in models if m in ok] or ["era5", "gfs"]
     models = models or ["gfs", "ecmwf"]
     atcf_id = (body.get("atcf") or "").strip().upper() or None
     if atcf_id:
@@ -958,8 +961,33 @@ async def case_xtimes(eid: str, model: str = "ecmwf"):
     out = []
     while t <= t1:
         out.append({"time": t.isoformat(), "archived": 0 in archive.archived_steps(model, t)})
+        # intermediate analyses archived as short steps of the previous run (ERA5: every 3 h)
+        for h in range(1, 6):
+            if h in archive.archived_steps(model, t) and t + dt.timedelta(hours=h) <= t1 and \
+                    _xs_upper_ok(model, t, h):
+                out.append({"time": (t + dt.timedelta(hours=h)).isoformat(), "archived": True})
         t += dt.timedelta(hours=6)
     return out
+
+
+def _xs_upper_ok(model: str, run, step: int) -> bool:
+    """True when the step holds pressure-level fields (not only surface ones)."""
+    from . import archive
+    d = archive._path(model, run, step, ("t", 500)).parent
+    return d.exists() and any(d.glob("t_*.npz"))
+
+
+def _xs_run_step(model: str, t):
+    """(run, step) holding the analysis valid at t: the run at t, else a short step of the
+    previous 6-hourly run (ERA5 3-hourly analyses)."""
+    from . import archive
+    if 0 in archive.archived_steps(model, t):
+        return t, 0
+    r = t.replace(hour=(t.hour // 6) * 6)
+    h = int((t - r).total_seconds() // 3600)
+    if h and h in archive.archived_steps(model, r) and _xs_upper_ok(model, r, h):
+        return r, h
+    return t, 0
 
 
 @app.get("/api/cases/{eid}/xsection.png")
@@ -984,16 +1012,20 @@ async def case_xsection_png(eid: str, time: str, lat0: float, lon0: float, lat1:
         lo0, lo1, la0, la1 = m.coverage
         clip = Domain(max(clip.lon0, lo0), min(clip.lon1, lo1), max(clip.lat0, la0), min(clip.lat1, la1))
 
+    run, step = _xs_run_step(model, t)
+
     async def produce():
         try:
-            sec = await section(m, t, 0, lat0, lon0, lat1, lon1, clip=clip)
+            sec = await section(m, run, step, lat0, lon0, lat1, lon1, clip=clip)
         except FieldUnavailable as e:
-            if 0 not in archive.archived_steps(model, t):
+            if step not in archive.archived_steps(model, run):
                 raise HTTPException(404, f"A análise {m.name} de {fmt_time(t)} ainda não está no arquivo "
                                          "(run ainda não publicada ou por arquivar).") from None
             raise HTTPException(404, f"{e} (análise {m.name} de {fmt_time(t)})") from None
         title = f"Corte vertical {a or 'A'} → {b or 'B'} — {m.name} · evento «{ev['name']}»"
-        sub = f"{KINDS[kind]}   ·   Análise {fmt_time(t)} (passo +0 h, arquivo do evento)"
+        sub = f"{KINDS[kind]}   ·   Análise {fmt_time(t)} (" + \
+            ("passo +0 h" if step == 0 else f"análise intermédia, guardada como {run:%HZ} +{step} h") + \
+            ", arquivo do evento)"
         return await _xs_render(sec, _xs_meta(kind, title, sub, m.source, a, b))
     return await _cached_png(_case_key(ev, "xsection", model, time, round(lat0, 3), round(lon0, 3),
                                        round(lat1, 3), round(lon1, 3), kind, a, b), produce)

@@ -50,6 +50,9 @@ STATIONS = [
     ("08190", "SPM00008190", "Barcelona", 41.39, 2.12),
     ("60018", "SPM00060018", "Güímar (Tenerife)", 28.32, -16.38),
     ("07510", "FRM00007510", "Bordéus", 44.83, -0.69),
+    ("07110", "FRM00007110", "Brest", 48.45, -4.42),
+    ("03953", "EIM00003953", "Valentia (Irlanda)", 51.94, -10.25),
+    ("03808", "UKM00003808", "Camborne (Cornualha)", 50.22, -5.33),
 ]
 STATION = {s[0]: s for s in STATIONS}
 

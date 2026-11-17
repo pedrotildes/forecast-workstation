@@ -330,7 +330,9 @@ def render_case_meteogram(data: dict) -> bytes:
 # ------------------------------------------------------------------ NHC / ATCF forecast verification
 PLACES_PT = [(36.98, "Sagres"), (37.95, "Sines"), (38.70, "Lisboa"), (39.36, "Peniche"), (39.60, "Nazaré"),
              (40.15, "Figueira da Foz"), (40.64, "Aveiro"), (41.15, "Porto"), (41.69, "Viana do Castelo"),
-             (42.88, "Finisterra")]
+             (42.88, "Finisterra"), (43.37, "Corunha"), (48.45, "Brest"), (49.96, "Lizard Point"),
+             (51.45, "Mizen Head"), (51.90, "Cork"), (52.27, "Tralee"), (52.66, "Limerick"), (53.27, "Galway"),
+             (54.27, "Sligo"), (54.65, "Donegal"), (55.37, "Malin Head")]
 
 
 def render_atcf_tracks(data: dict) -> bytes:

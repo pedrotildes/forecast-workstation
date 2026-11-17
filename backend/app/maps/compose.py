@@ -176,8 +176,10 @@ async def build_job(model: Model, run: dt.datetime, step: int, steps: list[int],
         "lats": grid.lats, "lons": grid.lons,
         "layers": out_layers,
         "header": {
-            "left1": f"{model.name} {model.resolution}   ·   Run {fmt_time(run)}",
-            "left2": f"Previsão +{step} h   ·   {region.name}",
+            "left1": f"{model.name} {model.resolution}   ·   " +
+                     (f"Análise {fmt_time(valid)}" if getattr(model, "reanalysis", False) else f"Run {fmt_time(run)}"),
+            "left2": ("Reanálise horária (acumulados e rajadas: hora anterior)" if getattr(model, "reanalysis", False)
+                      else f"Previsão +{step} h") + f"   ·   {region.name}",
             "layers": "  ·  ".join(labels),
             "right1": f"Válido: {fmt_time(valid)}",
             "right2": f"{run:%Y-%m-%d %H} UTC + {step} h",

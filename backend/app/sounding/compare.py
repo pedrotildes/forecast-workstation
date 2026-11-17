@@ -25,9 +25,12 @@ def render_skewt_multi(items: list[dict], title: str, subtitle: str) -> bytes:
     rmax = 30
     for it in items:
         prof = it["snd"]["profile"]
-        z = prof["z"] - prof["z"][0]
+        z = _heights(prof)
+        z = z - z[0]
         m = z <= 12000
-        rmax = max(rmax, float(np.nanmax(np.hypot(prof["u"][m], prof["v"][m]))))
+        sp = np.hypot(prof["u"][m], prof["v"][m])
+        if sp.size and np.isfinite(sp).any():         # observed soundings may carry no wind
+            rmax = max(rmax, float(np.nanmax(sp)))
     rmax = int(np.ceil(rmax / 10) * 10) + 10
     h = Hodograph(hax, component_range=rmax)
     h.add_grid(increment=10, color="#bbb", lw=0.5)
@@ -58,11 +61,12 @@ def render_skewt_multi(items: list[dict], title: str, subtitle: str) -> bytes:
         skew.plot_barbs(p[sel], prof["u"][sel] * units.knot, prof["v"][sel] * units.knot,
                         xloc=xloc, length=5.2, linewidth=0.7, color=col,
                         sizes={"emptybarb": 0.06})
-        z = prof["z"] - prof["z"][0]
+        z = _heights(prof)
+        z = z - z[0]
         m = z <= 12000
         hax.plot(prof["u"][m], prof["v"][m], color=col, lw=2.0, label=it["name"])
         for km in (1, 3, 6):
-            if km * 1000 <= z[m][-1]:
+            if m.any() and km * 1000 <= z[m][-1]:
                 hax.plot(np.interp(km * 1000, z, prof["u"]), np.interp(km * 1000, z, prof["v"]),
                          "o", ms=3.5, color=col)
         rm = it["an"].get("kinematics", {}).get("rm")
@@ -119,3 +123,23 @@ def render_skewt_multi(items: list[dict], title: str, subtitle: str) -> bytes:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=110, facecolor="white")
     return buf.getvalue()
+
+
+def _heights(prof) -> np.ndarray:
+    """Geopotential heights with gaps filled: observed soundings (IGRA) often lack them below
+    the first standard level — extend downwards with the hypsometric equation, interpolate
+    interior gaps in ln p."""
+    z = np.asarray(prof["z"], dtype=float).copy()
+    ok = np.isfinite(z)
+    if ok.all() or ok.sum() < 2:
+        return z
+    p = np.asarray(prof["p"], dtype=float)
+    t = np.asarray(prof["t"], dtype=float) if "t" in prof else np.full(p.shape, 10.0)
+    i0 = int(np.argmax(ok))
+    for i in range(i0 - 1, -1, -1):
+        tm = np.nanmean([t[i], t[i + 1]]) if np.isfinite(t[i:i + 2]).any() else 10.0
+        z[i] = z[i + 1] - 29.27 * (tm + 273.15) * np.log(p[i] / p[i + 1])
+    ok = np.isfinite(z)
+    if not ok.all():
+        z[~ok] = np.interp(-np.log(p[~ok]), -np.log(p[ok]), z[ok])
+    return z

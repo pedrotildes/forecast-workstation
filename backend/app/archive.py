@@ -21,8 +21,10 @@ import asyncio
 import datetime as dt
 import json
 import math
+import os
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -64,7 +66,7 @@ def save_field(model_id: str, run, step: int, key, f: Field) -> int:
     q = np.where(finite, np.round((v - lo) / scale), 65535).astype(np.uint16)
     p = _path(model_id, run, step, key)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.stem + ".tmp.npz")
+    tmp = _tmp_name(p, ".tmp.npz")
     np.savez_compressed(tmp, q=q, lo=lo, scale=scale, lats=f.lats.astype(np.float32),
                         lons=f.lons.astype(np.float32), units=f.units)
     tmp.replace(p)
@@ -113,8 +115,14 @@ def load_events() -> list[dict]:
     return []
 
 
+def _tmp_name(p: Path, suffix: str) -> Path:
+    """Per-process/thread temporary name: the server, the stand-alone archiver and imports
+    can write the same file at the same time."""
+    return p.with_name(f"{p.stem}.{os.getpid()}.{threading.get_ident()}{suffix}")
+
+
 def save_events(evs: list[dict]) -> None:
-    tmp = EVENTS_FILE.with_suffix(".tmp")
+    tmp = _tmp_name(EVENTS_FILE, ".tmp")
     tmp.write_text(json.dumps(evs, indent=1, ensure_ascii=False, default=str))
     tmp.replace(EVENTS_FILE)
 
@@ -242,10 +250,16 @@ async def archive_event(eid: str, log=print) -> dict:
     if ev is None:
         raise KeyError(eid)
     box = REGIONS[ev.get("region", "nea")].download_domain
+    fc_models = list(ev.get("models", []))
     if is_historical(ev):
-        return await archive_historical(ev, (box.lon0, box.lon1, box.lat0, box.lat1), log)
+        await archive_historical(ev, (box.lon0, box.lon1, box.lat0, box.lat1), log)
+        # forecasts too, for the models whose archives on AWS reach the event
+        fc_models = [m for m in fc_models if m in FORECAST_ARCHIVE and parse_t(ev["start"]) >= FORECAST_ARCHIVE[m]]
+        if not fc_models:
+            return get_event(eid).get("progress", {})
+        ev = get_event(eid)
     dom = Domain(box.lon0, box.lon1, box.lat0, box.lat1)
-    stats = {}
+    stats = dict(ev.get("progress") or {}) if is_historical(ev) else {}
 
     async def do_model(mid):
         m = MODELS[mid]
@@ -311,7 +325,7 @@ async def archive_event(eid: str, log=print) -> dict:
 
         st["fields"], st["bytes"], st["done"], st["unavailable"] = await asyncio.to_thread(totals)
 
-    await asyncio.gather(*(do_model(mid) for mid in ev.get("models", [])))
+    await asyncio.gather(*(do_model(mid) for mid in fc_models))
     update_event(eid, progress=stats, updated=_utcnow().isoformat(),
                  size=event_size(eid))
     return stats
@@ -449,6 +463,10 @@ def delete_event(eid: str, delete_fields: bool = True) -> None:
 
 
 HISTORICAL_DAYS = 10      # events that ended longer ago than this come from the archives
+# first date of the full forecast archives used for past events (GFS: NOAA on AWS;
+# ECMWF IFS/AIFS open data: the AWS mirror)
+FORECAST_ARCHIVE = {"gfs": dt.datetime(2021, 3, 1), "ecmwf": dt.datetime(2023, 1, 20),
+                    "aifs": dt.datetime(2025, 3, 1)}
 
 
 def is_historical(ev: dict) -> bool:
@@ -502,7 +520,7 @@ async def archive_historical(ev: dict, box, log=print) -> dict:
             except Exception as e:  # noqa: BLE001
                 mark("era5", estado=f"erro: {e}")
                 log(f"[era5] {eid}: {e}")
-        if "gfs" in models:
+        if "gfs" in models and parse_t(ev["start"]) < FORECAST_ARCHIVE["gfs"]:
             mark("gfs", estado="a importar")
             try:
                 from .gfs_hist import import_event as gfs_import

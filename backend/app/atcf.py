@@ -124,31 +124,49 @@ def _land():
     import cartopy.io.shapereader as shpreader
     from shapely.ops import unary_union
     from shapely.prepared import prep
-    geoms = list(shpreader.Reader(shpreader.natural_earth("50m", "physical", "land")).geometries())
+    # continents and large islands only (≥ 2 deg², e.g. Ireland, Great Britain): a forecast track
+    # crossing Madeira or the Azores is not a landfall
+    geoms = []
+    for g in shpreader.Reader(shpreader.natural_earth("50m", "physical", "land")).geometries():
+        parts = getattr(g, "geoms", [g])
+        geoms += [q for q in parts if q.area >= 2.0]
     return prep(unary_union(geoms))
 
 
 def landfall(track: list[dict], after: dt.datetime | None = None) -> dict | None:
-    """First crossing from sea to land (lat, lon, time), interpolated between points."""
+    """First crossing from sea to land (lat, lon, time). Each segment between track points is
+    walked in ~5 km steps (a track can cross a peninsula between two points at sea), then the
+    crossing is refined by bisection."""
+    import math
+
     from shapely.geometry import Point
     land = _land()
     pts = [p for p in track if after is None or p["time"] >= after]
+
+    def on_land(a, b, f):
+        return land.contains(Point(a["lon"] + f * (b["lon"] - a["lon"]), a["lat"] + f * (b["lat"] - a["lat"])))
+
+    prev_land = None
     for a, b in zip(pts, pts[1:]):
-        if land.contains(Point(a["lon"], a["lat"])):
-            continue
-        if not land.contains(Point(b["lon"], b["lat"])):
-            continue
-        lo, hi = 0.0, 1.0                     # bisection along the segment
-        for _ in range(30):
-            mid = (lo + hi) / 2
-            pt = Point(a["lon"] + mid * (b["lon"] - a["lon"]), a["lat"] + mid * (b["lat"] - a["lat"]))
-            if land.contains(pt):
-                hi = mid
-            else:
-                lo = mid
-        f = hi
-        return {"lat": a["lat"] + f * (b["lat"] - a["lat"]), "lon": a["lon"] + f * (b["lon"] - a["lon"]),
-                "time": a["time"] + (b["time"] - a["time"]) * f}
+        km = 111.2 * math.hypot(b["lat"] - a["lat"], (b["lon"] - a["lon"]) * math.cos(math.radians(a["lat"])))
+        n = max(2, int(km / 5))
+        fs = [i / n for i in range(n + 1)]
+        states = [on_land(a, b, f) for f in fs]
+        if prev_land is None:
+            prev_land = states[0]
+        for (f0, s0), (f1, s1) in zip(zip(fs, [prev_land] + states[1:]), zip(fs[1:], states[1:])):
+            if not s0 and s1:
+                lo, hi = f0, f1
+                for _ in range(20):
+                    mid = (lo + hi) / 2
+                    if on_land(a, b, mid):
+                        hi = mid
+                    else:
+                        lo = mid
+                f = hi
+                return {"lat": a["lat"] + f * (b["lat"] - a["lat"]), "lon": a["lon"] + f * (b["lon"] - a["lon"]),
+                        "time": a["time"] + (b["time"] - a["time"]) * f}
+        prev_land = states[-1]
     return None
 
 

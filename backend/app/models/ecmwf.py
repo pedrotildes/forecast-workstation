@@ -19,6 +19,7 @@ from .base import Domain, FieldUnavailable, Key, Model, TTLCache, cycle_floor, u
 
 MIRRORS = ["https://data.ecmwf.int/forecasts",
            "https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com"]
+DIRECT_DAYS = 4                     # how long data.ecmwf.int keeps a run
 
 PL = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
 
@@ -59,20 +60,24 @@ class _ECMWFBase(Model):
     def last_nominal_step(self, run):
         return self.nominal_steps(run)[-1]
 
-    def _url(self, mirror: str, run: dt.datetime, step: int, ext: str) -> str:
-        s = self.stream(run)
+    def streams(self, run: dt.datetime) -> list[str]:
+        return [self.stream(run)]
+
+    def _url(self, mirror: str, run: dt.datetime, step: int, ext: str, s: str | None = None) -> str:
+        s = s or self.stream(run)
         return (f"{mirror}/{run:%Y%m%d}/{run:%H}z/{self.path_model}/0p25/{s}/"
                 f"{run:%Y%m%d%H}0000-{step}h-{s}-fc.{ext}")
 
     # --- discovery ---------------------------------------------------
     async def _exists(self, c: httpx.AsyncClient, run, step) -> bool:
         for m in MIRRORS:
-            try:
-                r = await c.head(self._url(m, run, step, "index"))
-                if r.status_code == 200:
-                    return True
-            except httpx.HTTPError:
-                continue
+            for st in self.streams(run):
+                try:
+                    r = await c.head(self._url(m, run, step, "index", st))
+                    if r.status_code == 200:
+                        return True
+                except httpx.HTTPError:
+                    continue
         return False
 
     async def list_runs(self) -> list[dt.datetime]:
@@ -115,30 +120,41 @@ class _ECMWFBase(Model):
         if ck in self._idx_cache:
             return self._idx_cache[ck]
         p = GRIB_CACHE / self.id / run.strftime("%Y%m%d%H") / f"{step:03d}" / "index.jsonl"
+        src = p.with_name("source.txt")            # GRIB URL the cached index belongs to
+        if p.exists() and src.exists():
+            try:
+                entries = [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+                res = (src.read_text().strip(), entries)
+                self._idx_cache[ck] = res
+                return res
+            except (OSError, json.JSONDecodeError):
+                pass
         last_err = None
-        for m in MIRRORS:
-            # S3 answers 503 "slow down" under load: retry with back-off before giving up
-            for attempt in range(4):
-                try:
-                    if p.exists():
-                        text = p.read_text()
-                    else:
-                        r = await c.get(self._url(m, run, step, "index"))
+        # data.ecmwf.int keeps only the last few days: older runs come from the AWS mirror
+        mirrors = MIRRORS if utcnow() - run < dt.timedelta(days=DIRECT_DAYS) else MIRRORS[1:]
+        for m in mirrors:
+            for st in self.streams(run):
+                # S3 answers 503 "slow down" under load: retry with back-off before giving up
+                for attempt in range(5):
+                    try:
+                        r = await c.get(self._url(m, run, step, "index", st))
                         r.raise_for_status()
                         text = r.text
+                        entries = [json.loads(line) for line in text.splitlines() if line.strip()]
+                        url = self._url(m, run, step, "grib2", st)
                         p.parent.mkdir(parents=True, exist_ok=True)
                         p.write_text(text)
-                    entries = [json.loads(line) for line in text.splitlines() if line.strip()]
-                    res = (self._url(m, run, step, "grib2"), entries)
-                    self._idx_cache[ck] = res
-                    return res
-                except httpx.HTTPStatusError as e:
-                    last_err = e
-                    if e.response.status_code < 500:
-                        break                      # 404: not on this mirror
-                except (httpx.HTTPError, json.JSONDecodeError) as e:
-                    last_err = e
-                await asyncio.sleep(2.0 * 2 ** attempt)
+                        src.write_text(url)
+                        res = (url, entries)
+                        self._idx_cache[ck] = res
+                        return res
+                    except httpx.HTTPStatusError as e:
+                        last_err = e
+                        if e.response.status_code < 500:
+                            break                  # 404: not in this stream / on this mirror
+                    except (httpx.HTTPError, json.JSONDecodeError) as e:
+                        last_err = e
+                    await asyncio.sleep(2.0 * 2 ** attempt)
         raise FieldUnavailable(f"{self.name}: index unavailable for {run:%Y%m%d%H} +{step}h ({last_err})")
 
     def _find(self, entries: list[dict], key: Key) -> dict | None:
@@ -160,14 +176,16 @@ class _ECMWFBase(Model):
     async def _range(self, c: httpx.AsyncClient, url: str, e: dict) -> bytes:
         a, n = int(e["_offset"]), int(e["_length"])
         async with self._sem:
-            for attempt in range(3):
+            for attempt in range(5):
+                slow = False
                 try:
                     r = await c.get(url, headers={"Range": f"bytes={a}-{a + n - 1}"})
                     if r.status_code in (200, 206) and len(r.content) == n:
                         return r.content
+                    slow = r.status_code in (429, 503)       # S3 "slow down"
                 except httpx.HTTPError:
                     pass
-                await asyncio.sleep(1.0 * (attempt + 1))
+                await asyncio.sleep((2.0 * 2 ** attempt) if slow else 1.0 * (attempt + 1))
         raise FieldUnavailable(f"download failed: {url} [{a}+{n}]")
 
     async def _download(self, run, step, keys, domain: Domain) -> dict[Key, bytes]:
@@ -202,6 +220,10 @@ class ECMWF_IFS(_ECMWFBase):
     def stream(self, run):
         # 06/18Z runs are published in the "oper" stream too (formerly "scda", to +90 h)
         return "oper"
+
+    def streams(self, run):
+        # older 06/18Z runs (e.g. January 2026 on the AWS mirror) are still under "scda"
+        return ["oper", "scda"] if run.hour in (6, 18) else ["oper"]
 
     def nominal_steps(self, run):
         if run.hour in (0, 12):
@@ -246,7 +268,7 @@ class ECMWF_ENS_EP(_ECMWFBase):
     def _file_step(step: int) -> int:
         return 240 if step <= 240 else 360
 
-    def _url(self, mirror, run, step, ext):
+    def _url(self, mirror, run, step, ext, s=None):
         fs = self._file_step(step)
         return (f"{mirror}/{run:%Y%m%d}/{run:%H}z/ifs/0p25/enfo/"
                 f"{run:%Y%m%d%H}0000-{fs}h-enfo-ep.{ext}")

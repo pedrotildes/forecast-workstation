@@ -18,6 +18,9 @@ from ..grib import Field, split_messages
 from .base import Domain, Key, Model, TTLCache, cycle_floor, utcnow
 
 FILTER = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
+# NOAA Open Data on AWS: every GFS run since 2021 (NOMADS keeps only ~10 days)
+AWS = "https://noaa-gfs-bdp-pds.s3.amazonaws.com"
+NOMADS_DAYS = 9
 LISTING = "https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/gfs.{ymd}/{hh}/atmos/"
 
 PL = [1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500,
@@ -85,7 +88,7 @@ class GFS(Model):
     description = "NCEP Global Forecast System — 0.25°, 4 runs/dia, até +384 h"
     levels = PL
     native = set(_UPPER) | set(_SINGLE)
-    source = "NOAA/NCEP NOMADS"
+    source = "NOAA/NCEP GFS (NOMADS; NOAA Open Data na AWS)"
 
     def __init__(self):
         self._steps_cache = TTLCache(300)
@@ -150,9 +153,10 @@ class GFS(Model):
             groups = [(groups[0][0] | groups[1][0], groups[0][1] | groups[1][1])]
 
         blobs: list[bytes] = []
+        old = utcnow() - run > dt.timedelta(days=NOMADS_DAYS)
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT,
                                      headers={"User-Agent": USER_AGENT}) as c:
-            for vars_, levs in groups:
+            for vars_, levs in ([] if old else groups):
                 params = [("dir", f"/gfs.{run:%Y%m%d}/{run:%H}/atmos"),
                           ("file", f"gfs.t{run:%H}z.pgrb2.0p25.f{step:03d}")]
                 params += [(f"var_{v}", "on") for v in sorted(vars_)]
@@ -172,6 +176,9 @@ class GFS(Model):
                             pass
                         await asyncio.sleep(1.5 * (attempt + 1))
 
+            if not blobs:                       # gone from NOMADS: the AWS archive (byte ranges)
+                blobs = await self._aws_blobs(c, run, step, keys)
+
         out: dict[Key, bytes] = {}
         best_rank: dict[Key, int] = {}
         for blob in blobs:
@@ -181,6 +188,45 @@ class GFS(Model):
                     if rank is not None and rank < best_rank.get(k, 99):
                         out[k], best_rank[k] = msg, rank
         return out
+
+    async def _aws_blobs(self, c: httpx.AsyncClient, run, step, keys) -> list[bytes]:
+        """Messages for ``keys`` from the global GRIB file on AWS, selected with its .idx
+        (variable and level strings) and fetched as HTTP byte ranges."""
+        url = f"{AWS}/gfs.{run:%Y%m%d}/{run:%H}/atmos/gfs.t{run:%H}z.pgrb2.0p25.f{step:03d}"
+        try:
+            r = await c.get(url + ".idx")
+        except httpx.HTTPError:
+            return []
+        if r.status_code != 200:
+            return []
+        lines = [ln.split(":") for ln in r.text.splitlines() if ln.count(":") >= 5]
+        offs = [int(p[1]) for p in lines]
+        want = set()
+        for name, level in keys:
+            if name in _UPPER:
+                want.add((_UPPER[name][0], f"{level} mb"))
+            elif name in _SINGLE:
+                want.add((_SINGLE[name][0], _SINGLE[name][1].replace("_", " ")))
+        ranges = []
+        for i, p in enumerate(lines):
+            if (p[3], p[4]) in want:
+                end = offs[i + 1] - 1 if i + 1 < len(offs) else ""
+                ranges.append((offs[i], end))
+        sem = asyncio.Semaphore(8)
+
+        async def get(a, b):
+            async with sem:
+                for attempt in range(3):
+                    try:
+                        rr = await c.get(url, headers={"Range": f"bytes={a}-{b}"})
+                        if rr.status_code in (200, 206):
+                            return rr.content
+                    except httpx.HTTPError:
+                        pass
+                    await asyncio.sleep(1 + attempt)
+            return b""
+        parts = await asyncio.gather(*(get(a, b) for a, b in ranges))
+        return [b"".join(parts)] if any(parts) else []
 
     @staticmethod
     def _match(k: Key, hdr: dict, step: int) -> int | None:

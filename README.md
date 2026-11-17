@@ -173,12 +173,23 @@ têm os dados, por isso o arquivo é preenchido a partir de outras fontes, sem c
   precipitação/rajadas das previsões curtas (06/18 UTC), arrumadas como a «cadeia de curto prazo».
   Aparece como modelo **ERA5 (reanálise)** em todos os separadores.
 - **Análises do GFS** (`app/gfs_hist.py`): ficheiros `gfsanl_4` (0,5°, 6 em 6 h) do arquivo da
-  NOAA/NCEI; as previsões antigas do GFS não estão disponíveis em acesso aberto.
+  NOAA/NCEI, para eventos anteriores a março de 2021 (as previsões dessa época não estão em
+  acesso aberto).
+- **Previsões arquivadas na AWS**: se o evento começa depois de 01/03/2021 (GFS,
+  `noaa-gfs-bdp-pds`), 20/01/2023 (ECMWF IFS, espelho `ecmwf-forecasts`) ou 01/03/2025 (AIFS),
+  as análises e as previsões desses modelos são descarregadas como num evento atual, por
+  intervalos de bytes. O GFS usa o NOMADS nos últimos 9 dias e a AWS antes disso; o ECMWF usa o
+  data.ecmwf.int nos últimos 4 dias e o espelho da AWS antes disso.
 - **NHC ATCF** (`app/atcf.py`): para ciclones tropicais (ex.: `AL132018`), a trajetória observada
   (best track) e as previsões oficiais e dos modelos; a chegada a terra é o primeiro ponto em terra
   (Natural Earth 50 m). No separador Casos: «Previsões NHC: trajetórias» e «… chegada a terra».
 - **Radiossondas** antigas: Univ. Wyoming (também com o número WMO antigo da estação, p. ex.
   Lisboa 08579) e NOAA IGRA v2 (ficheiro do período completo).
+
+A região de um evento pode ser «Atlântico NE e Ibéria» ou «Atlântico NE, Ibéria e Ilhas
+Britânicas» (para tempestades que seguem para norte, como o Ophelia em 2017). Os cortes verticais
+da ERA5 aceitam também as análises intermédias (de 3 em 3 h), e os mapas da ERA5 dizem
+«Análise» em vez de «Run/Previsão».
 
 ## Casos (análise de casos particulares)
 

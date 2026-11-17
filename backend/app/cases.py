@@ -15,6 +15,7 @@ Definitions
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import datetime as dt
 
 import numpy as np
@@ -67,10 +68,18 @@ def atcf_systems(ev: dict) -> list[dict]:
     return [sysd]
 
 
+# region of the event being analysed (set by every entry point that receives the event)
+_EV_REGION: contextvars.ContextVar[str] = contextvars.ContextVar("case_region", default="nea")
+
+
+def _use(ev: dict) -> None:
+    _EV_REGION.set(ev.get("region", "nea") if ev.get("region") in REGIONS else "nea")
+
+
 def _domain(model=None):
     """Event area (clipped to the model's coverage, which is how the archive stored it)."""
     from .models.base import Domain
-    d = REGIONS["nea"].download_domain
+    d = REGIONS[_EV_REGION.get()].download_domain
     lo0, lo1, la0, la1 = d.lon0, d.lon1, d.lat0, d.lat1
     if model is not None and model.coverage:
         c = model.coverage
@@ -157,7 +166,7 @@ def find_centre(f: Field, lat0, lon0, radius_km):
 
 
 def _speed_radius(hours: float) -> float:
-    return max(350.0, 110.0 * hours)         # up to ~110 km/h displacement (Charles: ~90 km/h)
+    return max(350.0, 130.0 * hours)         # up to ~130 km/h displacement (Kristin: ~110 km/h)
 
 
 def _local_minima(f: Field, lat0, lon0, radius_km):
@@ -180,6 +189,17 @@ def _local_minima(f: Field, lat0, lon0, radius_km):
         near = _dist_km(LA[j, i], LO[j, i], LA, LO) <= 60
         out.append((float(LA[j, i]), float(LO[j, i]), float(np.min(v[near]) / 100.0), float(d[j, i])))
     return out
+
+
+def _seed_centre(f, lat, lon, radius_km):
+    """First position of a track: the lowest pressure near the seed, or — for a small low on
+    the flank of a deeper one, where the pressure keeps falling towards the rim — the closed
+    low nearest to the seed."""
+    c = find_centre(f, lat, lon, radius_km)
+    if c is not None:
+        return c
+    near = _local_minima(f, lat, lon, radius_km)
+    return min(near, key=lambda m: m[3])[:3] if near else None
 
 
 def _jump(f, lat, lon, hrs, last_p, motion):
@@ -232,6 +252,7 @@ def _ref_pos(ref, t):
 async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> list[dict]:
     """Track in this model's analyses; ``ref`` (another model's track) seeds the search when
     this model has no data at the seed time (e.g. ICON-EU, kept only for the last 24 h)."""
+    _use(ev)
     times = analysis_times(model, ev)
     if not times:
         return []
@@ -254,7 +275,7 @@ async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> li
                 lat, lon = rp
             hrs = abs((times[k] - last_t).total_seconds()) / 3600 if last_t else 6
             if last_t is None:
-                c = find_centre(f, lat, lon, 300.0 if ref else 500.0)
+                c = _seed_centre(f, lat, lon, 300.0 if ref else 500.0)
             else:
                 c = _next_centre(f, lat, lon, hrs, last_p, motion, last_hrs)
             if c is None:
@@ -284,6 +305,7 @@ async def track_analysis(model, ev, system, ref: list[dict] | None = None) -> li
 
 async def track_forecast(model, run, ev, start: dict) -> list[dict]:
     """Follow the low in one forecast run, starting from an analysed position."""
+    _use(ev)
     t1 = archive.parse_t(ev["end"])
     st0 = int((archive.parse_t(start["time"]) - run).total_seconds() // 3600)
     if st0 < 0:
@@ -297,7 +319,7 @@ async def track_forecast(model, run, ev, start: dict) -> list[dict]:
             continue
         hrs = (s - last) if last is not None else 0
         if last is None:
-            c = find_centre(f, lat, lon, 300.0)
+            c = _seed_centre(f, lat, lon, 300.0)
         else:
             c = _next_centre(f, lat, lon, hrs, last_p, motion, last_hrs)
         if c is None:
@@ -336,6 +358,7 @@ def select_forecasts(fcs: dict, ref: list[dict], leads=(24, 48, 72, 96), focus=N
 
 async def forecast_runs(model, ev, analysis_track: list[dict]) -> dict:
     """{run iso: track} for the archived 00/12Z forecast runs started before the low ends."""
+    _use(ev)
     if not analysis_track:
         return {}
     t_last = archive.parse_t(analysis_track[-1]["time"])
@@ -343,8 +366,15 @@ async def forecast_runs(model, ev, analysis_track: list[dict]) -> dict:
             and r >= archive.parse_t(ev["start"]) - dt.timedelta(days=float(ev.get("lead_days", 2)) + 0.3)]
     out = {}
     for r in sorted(runs):
-        # first analysed point at or after the run start
-        start = next((p for p in analysis_track if archive.parse_t(p["time"]) >= r), None)
+        # first analysed point at or after the run start that falls on one of the run's steps
+        # (forecast steps are 6-hourly: a 3-hourly analysis in between would seed the tracker
+        # a few hundred km away from the low of a fast system)
+        have = set(await _steps(model, r))
+
+        def on_step(p):
+            h = (archive.parse_t(p["time"]) - r).total_seconds() / 3600
+            return h >= 0 and h == int(h) and int(h) in have
+        start = next((p for p in analysis_track if on_step(p)), None)
         if start is None:
             continue
         tr = await track_forecast(model, r, ev, start)
@@ -371,6 +401,7 @@ def chain_runs(ev) -> list[dt.datetime]:
 async def event_totals(model, ev, kind: str) -> tuple[Field | None, dict]:
     """kind 'precip': total precipitation (mm) from the chained 0–6 h forecasts;
     'gust': maximum gust (km/h) over the chained steps."""
+    _use(ev)
     runs = chain_runs(ev)
     acc, grid, used, missing = None, None, 0, 0
     for r in runs:
@@ -409,7 +440,7 @@ async def point_chain(model, ev, lat, lon) -> dict:
     if not model.covers(lat, lon):
         raise FieldUnavailable(model.outside_msg())
     dom = Domain.tile(lat, lon)
-    state, precip = {}, {}
+    state, precip, gust6 = {}, {}, {}
     keys = [(n, 0) for n in ("msl", "u10", "v10", "gust", "tp", "t2m") if model.has(n)]
     for r in chain_runs(ev):
         steps = sorted(set(await _steps(model, r)) & set(range(0, 7)))
@@ -429,6 +460,16 @@ async def point_chain(model, ev, lat, lon) -> dict:
                 if np.isfinite(tp):
                     precip[t] = (max(0.0, tp - prev_tp), s - prev_s)
                     prev_s, prev_tp = s, tp
+            if s == 6 and model.has("gust"):
+                # the gust ending at the next run's analysis time (step 0 carries none)
+                try:
+                    gf = await model.fetch(r, 6, [("gust", 0)], dom)
+                    gust6[t] = gf[("gust", 0)].at(lat, lon)
+                except (FieldUnavailable, KeyError):
+                    pass
+    for t, v in gust6.items():
+        if t in state and not np.isfinite(state[t].get("gust", np.nan)):
+            state[t]["gust"] = v
     times = sorted(set(state) | set(precip))
     g = lambda t, k: state.get(t, {}).get(k, np.nan)  # noqa: E731
     return {
@@ -444,6 +485,7 @@ async def point_chain(model, ev, lat, lon) -> dict:
 
 async def all_tracks(ev, models: list[str]) -> dict:
     """{system: {model: track}} — ECMWF (else GFS) first, used as reference for the others."""
+    _use(ev)
     out = {}
     order = [m for m in ("era5", "ecmwf", "gfs", "aifs", "icon_eu") if m in models]
     for sysd in systems(ev):
@@ -475,6 +517,7 @@ TRACK_STYLE = {"ecmwf": ("#dc2626", "o"), "gfs": ("#2563eb", "s"), "aifs": ("#16
 async def build_track_job(ev, models: list[str], fc_model: str | None, region="nea") -> dict:
     """Analysed tracks of every system (one colour per model) over the event's minimum MSLP;
     optionally the forecast tracks of fc_model's 00/12Z runs (thin, lighter = older)."""
+    _use(ev)
     from .maps.styles import Fill, _interp
     tracks = await all_tracks(ev, models)
     # background: minimum MSLP over the event (reference model analyses)
@@ -539,6 +582,7 @@ async def build_track_job(ev, models: list[str], fc_model: str | None, region="n
 
 
 async def build_totals_job(ev, model_id: str, kind: str, region: str) -> dict:
+    _use(ev)
     from .maps.styles import GUST_COLORS, GUST_LEVELS, Fill, _interp
     m = MODELS[model_id]
     f, info = await event_totals(m, ev, kind)
@@ -555,6 +599,9 @@ async def build_totals_job(ev, model_id: str, kind: str, region: str) -> dict:
         fill = Fill(GUST_LEVELS, GUST_COLORS, extend="max", over="#ffe0ff", transparent_under=True)
         title, unit = "Rajada máxima no evento", "km/h"
         how = ("máximo das rajadas nos passos 0–6 h de cada run (GFS/ICON: horário; ECMWF: máx. 3 h)")
+    if model_id == "era5":
+        how = ("soma da precipitação horária da reanálise" if kind == "precip"
+               else "máximo das rajadas horárias da reanálise")
     tracks = await all_tracks(ev, [model_id])
     layers = [{"type": "fill", "var": "t2m", "data": f.values, "fill_style": fill,
                "label": f"{title} — {m.name} ({unit})"},
@@ -574,6 +621,7 @@ async def build_totals_job(ev, model_id: str, kind: str, region: str) -> dict:
 
 async def sequence_data(ev, model_id: str, every: int, region: str) -> dict:
     """Panels of MSLP + 6-h precipitation every `every` hours (analysis chain)."""
+    _use(ev)
     m = MODELS[model_id]
     t0, t1 = archive.parse_t(ev["start"]), min(archive.parse_t(ev["end"]), archive._utcnow())
     t = t0.replace(hour=(t0.hour // 6) * 6, minute=0, second=0, microsecond=0)
@@ -624,7 +672,7 @@ async def case_sounding_items(ev, t: dt.datetime, lat: float, lon: float, sid: s
             continue
         if len(snd["profile"]["p"]) < 5:
             continue
-        items.append({"model": mid, "name": f"{m.name} (análise)", "short": m.name.replace("ECMWF ", ""),
+        items.append({"model": mid, "name": f"{m.name} (análise)", "short": m.name.replace("ECMWF ", "").replace(" (reanálise)", ""),
                       "run": t, "step": 0, "snd": snd})
     return items
 

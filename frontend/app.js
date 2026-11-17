@@ -742,8 +742,10 @@ function renderHistoricalPanel(e, box) {
     ...(e.atcf ? [["atcf", `NHC ${e.atcf} (trajetórias)`, "#f59e0b"]] : []), ["radiossondas", "Radiossondas", "#ddd"]];
   const rows = parts.map(([k, name, col]) => {
     const p = prog[k];
-    const det = !p ? "" : p.campos != null ? `${p.campos} campos` : p.sondagens != null ? `${p.sondagens} sondagens` : "";
-    return `<tr><td style="color:${col || "#ccc"}"><b>${esc(name)}</b></td><td>${p ? esc(p.estado || "") : "à espera…"}</td><td>${det}</td></tr>`;
+    const det = !p ? "" : p.campos != null ? `${p.campos} campos` : p.sondagens != null ? `${p.sondagens} sondagens`
+      : p.total != null ? `${p.done}/${p.total} runs/passos · ${p.fields} campos · ${fmtMB(p.bytes)}` : "";
+    const st = !p ? "à espera…" : p.estado || (p.total != null ? "previsões arquivadas (AWS)" : "");
+    return `<tr><td style="color:${col || "#ccc"}"><b>${esc(name)}</b></td><td>${esc(st)}</td><td>${det}</td></tr>`;
   }).join("");
   box.innerHTML = `<h2>${esc(e.name)}</h2>
     <div class="sub">${e.start_label} → ${e.end_label} · evento histórico · ${fmtMB(e.size || 0)} em disco</div>
@@ -756,7 +758,8 @@ function renderHistoricalPanel(e, box) {
     </div>
     <table><thead><tr><th>Fonte</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     <p class="hint">Evento histórico: os servidores de previsão já não têm estes dados, por isso o arquivo usa a reanálise
-    ERA5 do ECMWF (horária, 0,25°, 27 níveis), as análises do GFS guardadas pela NOAA (0,5°, 6 em 6 h), as radiossondas
+    ERA5 do ECMWF (horária, 0,25°, 27 níveis), as análises do GFS guardadas pela NOAA (0,5°, 6 em 6 h; desde 2021, as
+    previsões completas do GFS, e desde 2023–2025 as do ECMWF IFS e do AIFS, a partir dos arquivos na AWS), as radiossondas
     (Univ. Wyoming / IGRA) e, para ciclones tropicais, a trajetória observada e as previsões do NHC (arquivo ATCF).
     Não há radar nem satélite Meteosat no arquivo.</p>`;
   $$("#ev-panel .ev-actions button").forEach((b) => b.onclick = () => eventAction(e, b.dataset.a));
@@ -808,7 +811,7 @@ function initEvents() {
     const body = {
       name: $("#ev-name").value, start: $("#ev-start").value, end: $("#ev-end").value,
       models: $$("#ev-models input").filter((x) => x.checked).map((x) => x.value),
-      lead_days: +$("#ev-lead").value, notes: $("#ev-notes").value, region: "nea", atcf: $("#ev-atcf").value,
+      lead_days: +$("#ev-lead").value, notes: $("#ev-notes").value, region: $("#ev-region").value || "nea", atcf: $("#ev-atcf").value,
     };
     const r = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const d = await r.json();
@@ -848,6 +851,7 @@ function applyCaseEvent() {
     $$("#case-models input").forEach((x) => { x.checked = ms.includes(x.value); });
   }
   if (ev.historical) { S.cs.fc = ""; $("#case-fc").value = ""; }
+  if (ev.region) { S.cs.region = ev.region; $("#case-region").value = ev.region; }
   $$("#case-products .atcf-only").forEach((b) => b.classList.toggle("hidden", !ev.atcf));
   if (!ev.atcf && ["atcf", "atcf_lf"].includes(S.cs.product)) S.cs.product = "track";
   S.cs.atcfBase = "all";

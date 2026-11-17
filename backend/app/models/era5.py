@@ -21,6 +21,7 @@ class ERA5(Model):
     global_download = True
     source = "ECMWF ERA5 (Copernicus C3S), via NCAR RDA ds633.0"
     run_every = 6
+    reanalysis = True                  # hourly analyses stored as run + step: no "forecast" wording
 
     async def list_runs(self) -> list[dt.datetime]:
         return []                      # the base class adds the archived runs
