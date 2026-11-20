@@ -242,6 +242,51 @@ Exemplo de `layers`:
  {"type":"wind","level":850,"style":"barbs"}]
 ```
 
+## Serviço de avisos (Telegram)
+
+`python -m app.alerts` (em `backend/`) segue, sem parar, os fenómenos extremos previstos para
+Portugal continental, a Madeira e os Açores e manda um alerta ilustrado para o telemóvel quando
+há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do IPMA.
+
+- **Áreas**: os 18 distritos (todos os pontos da grelha de 0,25° dentro de cada distrito), as 4
+  áreas da Madeira e os 3 grupos dos Açores (vilas e pontos do interior), com os códigos do IPMA.
+- **Fenómenos e critérios** (`app/alerts/criteria.py`, página «Critérios de Emissão dos Avisos
+  Meteorológicos» do IPMA): rajadas (91 km/h; 111 nas terras altas, acima de 700 m de
+  orografia do modelo a 0,25°; Açores 101), precipitação em 6 h (41 mm), tempo quente e frio (limiares
+  de cada distrito durante ≥ 48 h = dois dias seguidos); vermelho: > 130 km/h, > 60 mm e os
+  limiares vermelhos de cada distrito. Ficam de fora a chuva em 1 h, a trovoada, a neve, o
+  nevoeiro e a agitação marítima.
+- **Probabilidade**: os 50 membros do ensemble do ECMWF (`ef`, Open Data), lidos por intervalos
+  de bytes e recortados a Portugal; uma área chega ao nível num membro quando algum dos seus
+  pontos chega. Para poupar downloads, os membros só são lidos onde os produtos de
+  probabilidade do ECMWF (`ep`: rajadas ≥ 90 km/h, chuva ≥ 25 mm/24 h) ou a Tmáx/Tmín do IFS
+  mostram alguma hipótese.
+- **Certeza** (`app/alerts/events.py`, ajustável em `config.json`): ≥ 60 % dos membros
+  (vermelho ≥ 50 %), ≥ 40 % já na run anterior, metade dos modelos determinísticos (IFS, AIFS,
+  GFS, ICON-EU) perto do limiar e até 4 dias de antecedência (calor e frio 6). Abaixo disso o
+  evento fica «em vigilância», só na app. Um evento confirmado mantém-se enquanto a
+  probabilidade não cair abaixo de 25 % (não há alertas e cancelamentos alternados).
+- **Mensagens**: alerta (texto + 7 figuras: probabilidade, valor alto provável, membros por dia,
+  pluma, evolução de run para run, modelos determinísticos, situação sinóptica), atualizações
+  só quando muda o nível, as áreas ou os dias, cancelamento; os avisos laranja e vermelho do
+  IPMA são reencaminhados. Das 23h às 8h chegam em silêncio, exceto os vermelhos. No Telegram,
+  `/estado` lista os eventos em curso.
+- **Separador «Avisos»** na app: estado do serviço, eventos (confirmados, em vigilância e
+  anteriores), tabela por área, figuras de cada run e mensagens enviadas.
+
+```bash
+cd backend
+../.venv/bin/python -m app.alerts configurar   # bot do Telegram (token no porta-chaves)
+../.venv/bin/python -m app.alerts instalar     # agente de arranque (macOS): sempre a correr
+../.venv/bin/python -m app.alerts agora --sem-envio   # um ciclo já, a mostrar o que enviaria
+../.venv/bin/python -m app.alerts estado
+../.venv/bin/python -m app.alerts remover      # tira o agente
+```
+
+Os dados ficam em `~/Library/Application Support/ForecastWorkstation/alerts/` (estado, runs
+analisadas, figuras, registo `service.log`). O Mac tem de estar ligado e acordado para os
+alertas saírem a horas.
+
 ## Versões para computador (macOS e Windows)
 
 A app também é distribuída como aplicação de computador: o servidor e a interface são

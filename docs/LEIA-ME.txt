@@ -35,6 +35,24 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.0 (20/11/2026)
+  • Novo separador «Avisos»: acompanha os fenómenos extremos previstos
+    para Portugal continental, a Madeira e os Açores (vento, chuva forte
+    em 6 h, tempo quente e tempo frio) com os critérios laranja e
+    vermelho do IPMA. Para cada distrito e ilha mostra a probabilidade
+    dada pelos 50 membros do ensemble do ECMWF, os modelos IFS, AIFS, GFS
+    e ICON-EU e figuras (mapas de probabilidade, membros, evolução).
+  • Um evento só fica «confirmado» quando a certeza é grande (≥ 60 % dos
+    membros, já na run anterior, e os modelos de acordo); antes disso
+    fica «em vigilância». Mostra também os avisos laranja e vermelho do
+    IPMA em vigor.
+  • A análise e os alertas para o telemóvel (Telegram) são feitos por um
+    serviço que corre sozinho no Mac onde foi instalado; o separador
+    mostra o que esse serviço encontrou (nos outros computadores fica
+    vazio).
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.4.0 (17/11/2026)
   • Eventos recentes que já saíram dos servidores (desde 2021 para o
     GFS, 2023 para o ECMWF e 2025 para o AIFS): as previsões completas

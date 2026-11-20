@@ -309,6 +309,20 @@ def render_job(job: dict) -> tuple[bytes, list[float]]:
             _draw_values(ax, lats, lons, ly["data"], region, ly.get("fmt", "%.0f"))
 
     _overlay_features(ax, region)
+    # alert maps: highlighted warning areas and text labels (e.g. "Viseu 88%")
+    for ly in job["layers"]:
+        if ly["type"] == "areas":
+            for g, color in ly["geoms"]:
+                ax.add_geometries([g], crs=PC, facecolor="none", edgecolor="white",
+                                  linewidth=ly.get("lw", 2.4) + 2.0, zorder=7)
+                ax.add_geometries([g], crs=PC, facecolor="none", edgecolor=color,
+                                  linewidth=ly.get("lw", 2.4), zorder=7)
+        elif ly["type"] == "labels":
+            stroke = [pe.withStroke(linewidth=3.0, foreground="white")]
+            for lo, la, txt, color in ly["points"]:
+                ax.text(lo, la, txt, transform=PC, fontsize=ly.get("size", 8.6), fontweight="bold",
+                        color=color, ha="center", va="center", zorder=12, path_effects=stroke,
+                        clip_on=True)
     tracks = [ly for ly in job["layers"] if ly["type"] == "track"]
     for ly in tracks:
         _draw_track(ax, ly)

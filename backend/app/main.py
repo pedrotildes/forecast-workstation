@@ -1031,6 +1031,61 @@ async def case_xsection_png(eid: str, time: str, lat0: float, lon0: float, lat1:
                                        round(lat1, 3), round(lon1, 3), kind, a, b), produce)
 
 
+# ---------------------------------------------------------------- alert service (python -m app.alerts)
+_SAFE = re.compile(r"^[a-z0-9_-]+$")
+
+
+@app.get("/api/alerts")
+async def alerts_state():
+    """State written by the alert service: events, official IPMA warnings, service health."""
+    from .alerts import events as al_events
+    from .alerts import telegram as al_tg
+    from .alerts.__main__ import other_running
+    from .alerts.areas import names as area_names
+    from .alerts.criteria import PHENOMENA
+    st = al_events.load_state()
+    hb = st.get("heartbeat")
+    tg = al_tg.conf()
+    evs = sorted(st["events"], key=lambda e: ({"confirmado": 0, "vigilancia": 1}.get(e["status"], 2),
+                                                e["days"][0]), reverse=False)
+    return _clean({
+        "events": evs, "runs": st["runs"], "ipma": st["ipma"].get("active", []),
+        "ipma_checked": st["ipma"].get("checked"),
+        "service": {"running": other_running(), "heartbeat": hb,
+                    "telegram": {"configured": bool(tg.get("chat_id")), "bot": tg.get("bot")}},
+        "areas": area_names(),
+        "phenomena": PHENOMENA, "config": al_events.load_config()})
+
+
+@app.get("/api/alerts/{eid}/figs")
+async def alerts_figs(eid: str):
+    from .alerts.figures import FIG_DIR
+    if not _SAFE.match(eid):
+        raise HTTPException(400, "evento inválido")
+    d = FIG_DIR / eid
+    out = []
+    for rd in sorted((x for x in d.iterdir() if x.is_dir()), reverse=True) if d.exists() else []:
+        try:
+            caps = json.loads((rd / "captions.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            caps = {}
+        out.append({"run": rd.name, "figs": [{"name": n, "caption": c,
+                                              "url": f"/api/alerts/fig/{eid}/{rd.name}/{n}.png"}
+                                             for n, c in caps.items() if (rd / f"{n}.png").exists()]})
+    return out
+
+
+@app.get("/api/alerts/fig/{eid}/{run}/{name}.png")
+async def alerts_fig(eid: str, run: str, name: str):
+    from .alerts.figures import FIG_DIR
+    if not (_SAFE.match(eid) and run.isdigit() and _SAFE.match(name)):
+        raise HTTPException(400, "pedido inválido")
+    p = FIG_DIR / eid / run / f"{name}.png"
+    if not p.exists():
+        raise HTTPException(404, "figura não encontrada")
+    return FileResponse(p, media_type="image/png")
+
+
 # ---------------------------------------------------------------- front-end
 @app.get("/")
 async def index():

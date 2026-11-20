@@ -628,12 +628,14 @@ async function setTab(tab) {
   S.tab = tab;
   stop();
   $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  for (const t of ["maps", "sounding", "meteogram", "compare", "extremes", "live", "events", "cases"]) $(`#side-${t}`).classList.toggle("hidden", t !== tab);
-  $("#canvas").classList.toggle("hidden", tab === "live" || tab === "events");
+  for (const t of ["maps", "sounding", "meteogram", "compare", "extremes", "live", "events", "cases", "alerts"]) $(`#side-${t}`).classList.toggle("hidden", t !== tab);
+  $("#canvas").classList.toggle("hidden", tab === "live" || tab === "events" || tab === "alerts");
   $("#ev-panel").classList.toggle("hidden", tab !== "events");
-  $("#model-bar").classList.toggle("hidden", tab === "live" || tab === "events" || tab === "cases");
-  $("#timeline").classList.toggle("hidden", tab === "events");
+  $("#al-panel").classList.toggle("hidden", tab !== "alerts");
+  $("#model-bar").classList.toggle("hidden", tab === "live" || tab === "events" || tab === "cases" || tab === "alerts");
+  $("#timeline").classList.toggle("hidden", tab === "events" || tab === "alerts");
   if (tab === "events") { live.hide(); await showEvents(); return; }
+  if (tab === "alerts") { live.hide(); await showAlerts(); return; }
   if (tab === "cases") { live.hide(); await showCases(); return; }
   if (tab === "live") {
     status("A obter imagens de satélite…");
@@ -683,6 +685,123 @@ function initExtremes() {
   $$("#x-view button").forEach((b) => b.onclick = () => {
     S.x.view = b.dataset.v; $$("#x-view button").forEach((x) => x.classList.toggle("on", x === b));
     buildTicks(); show();
+  });
+}
+
+// ------------------------------------------------------------------ alerts (python -m app.alerts)
+const AL = { data: null, sel: null, run: null, timer: null };
+const AL_STATUS = { confirmado: "confirmado", vigilancia: "em vigilância", cancelado: "cancelado",
+  terminado: "terminado", descartado: "descartado" };
+const AL_WK = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+const AL_MON = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const alDay = (iso) => { const d = new Date(iso + "T00:00:00Z"); return `${AL_WK[d.getUTCDay()]} ${d.getUTCDate()} ${AL_MON[d.getUTCMonth()]}`; };
+const alDays = (days) => days.length === 1 ? alDay(days[0]) : `${alDay(days[0])} → ${alDay(days[days.length - 1])}`;
+const alRun = (iso) => {
+  const d = new Date(iso.length === 10 ? `${iso.slice(0, 4)}-${iso.slice(4, 6)}-${iso.slice(6, 8)}T${iso.slice(8)}:00:00Z` : iso + "Z");
+  return `${d.getUTCDate()} ${AL_MON[d.getUTCMonth()]} ${String(d.getUTCHours()).padStart(2, "0")} UTC`;
+};
+const alPct = (p) => `${Math.round(100 * (p || 0))}%`;
+const alLevelOf = (e) => e.status === "confirmado" ? (e.level || "laranja") : e.status === "vigilancia" ? "vigilancia" : "";
+const AL_MODELS = { ecmwf: "IFS", aifs: "AIFS", gfs: "GFS", icon_eu: "ICON-EU" };
+
+async function refreshAlertBadge() {
+  try {
+    const d = await api("/api/alerts");
+    const conf = d.events.filter((e) => e.status === "confirmado");
+    const b = $("#al-badge");
+    b.textContent = conf.length;
+    b.classList.toggle("hidden", !conf.length);
+    b.classList.toggle("red", conf.some((e) => e.level === "vermelho"));
+  } catch (e) { /* the service never ran: no badge */ }
+}
+
+async function showAlerts() {
+  try { AL.data = await api("/api/alerts"); } catch (e) { status("Erro: " + e.message, "err"); return; }
+  const d = AL.data;
+  const sv = d.service;
+  const last = d.runs.length ? alRun(d.runs[d.runs.length - 1]) : "—";
+  const hb = sv.heartbeat ? new Date(sv.heartbeat + "Z").toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" }) : "";
+  $("#al-service").innerHTML = `
+    <div><span class="al-dot" style="background:${sv.running ? "#22c55e" : "#ef4444"}"></span><b>${sv.running ? "a correr" : "parado"}</b>
+      ${hb ? `· último ciclo às ${hb}` : ""}</div>
+    <div>Última run analisada: <b>${last}</b> (ECMWF ENS)</div>
+    <div>Telegram: <b>${sv.telegram.configured ? "@" + esc(sv.telegram.bot || "bot") : "por configurar"}</b></div>
+    ${sv.running ? "" : `<div class="hint">Para o pôr a correr: <code>python -m app.alerts instalar</code> (em backend/).</div>`}`;
+  const act = d.events.filter((e) => ["confirmado", "vigilancia"].includes(e.status));
+  const old = d.events.filter((e) => !["confirmado", "vigilancia"].includes(e.status)).slice(-12).reverse();
+  if (!AL.sel || !d.events.find((e) => e.id === AL.sel)) AL.sel = (act[0] || old[0] || {}).id || null;
+  const card = (e) => {
+    const lv = alLevelOf(e);
+    const top = Object.entries(e.areas || {}).slice(0, 3).map(([c, a]) => `${esc(d.areas[c] || c)} ${alPct(a.p_o)}`).join(", ");
+    const P = d.phenomena[e.phen] || {};
+    return `<button class="ev-card al-card ${lv} ${lv ? "" : "old"} ${e.id === AL.sel ? "on" : ""}" data-id="${e.id}">
+      <b>${P.icon || ""} ${esc(P.name || e.phen)}</b>
+      <small>${alDays(e.days)} · ${AL_STATUS[e.status] || e.status}${e.level === "vermelho" ? " (vermelho)" : ""}</small>
+      <small>${esc(top)}</small></button>`;
+  };
+  $("#al-list").innerHTML = (act.length ? act.map(card).join("") : `<p class="hint">Sem eventos confirmados nem em vigilância.</p>`)
+    + (old.length ? `<h3 style="margin-top:12px">Anteriores</h3>` + old.map(card).join("") : "");
+  $$("#al-list .ev-card").forEach((b) => b.onclick = () => { AL.sel = b.dataset.id; AL.run = null; showAlerts(); });
+  const off = d.ipma.filter((w) => w.level === "orange" || w.level === "red");
+  const groups = {};
+  off.forEach((w) => { const k = [w.type, w.level, w.start, w.end].join("|"); (groups[k] = groups[k] || []).push(w); });
+  const gl = Object.values(groups);
+  $("#al-ipma").innerHTML = gl.length ? gl.map((g) => `<div>
+      <span class="al-tag ${g[0].level}">${g[0].level === "red" ? "vermelho" : "laranja"}</span><b>${esc(g[0].type)}</b>
+      · ${esc(g.map((w) => d.areas[w.area] || w.area).join(", "))}<br>
+      <small>${esc(g[0].start.replace("T", " ").slice(0, 16))} → ${esc(g[0].end.replace("T", " ").slice(11, 16))}</small></div>`).join("")
+    : `<p class="hint">Nenhum aviso laranja ou vermelho.</p>`;
+  await renderAlertPanel();
+  refreshAlertBadge();
+  clearTimeout(AL.timer);
+  if (S.tab === "alerts") AL.timer = setTimeout(showAlerts, 60000);
+}
+
+async function renderAlertPanel() {
+  const d = AL.data;
+  const box = $("#al-panel");
+  const e = d.events.find((x) => x.id === AL.sel);
+  if (!e) {
+    box.innerHTML = `<h2>Avisos</h2><p class="sub">Ainda não há eventos. O serviço analisa as runs das 00 e 12 UTC do
+      ensemble do ECMWF (por volta das 08h e das 20h) e mostra aqui o que encontra.</p>`;
+    return;
+  }
+  const P = d.phenomena[e.phen] || {};
+  const u = { vento: "km/h", chuva: "mm", calor: "°C", frio: "°C", mar: "m" }[e.phen] || "";
+  const rows = Object.entries(e.areas || {}).map(([c, a]) => {
+    const det = Object.entries(a.det || {}).map(([m, x]) =>
+      `<span style="color:${MODEL_COLORS[m] || "#ccc"}">${AL_MODELS[m] || m} ${Math.round(x.v)}</span>`).join(" · ");
+    return `<tr><td><span class="al-tag ${a.status}">${a.status === "vigilancia" ? "vigilância" : a.status}</span></td>
+      <td><b>${esc(d.areas[c] || c)}</b></td><td class="num">${alPct(a.p_o)}</td><td class="num">${alPct(a.p_r)}</td>
+      <td class="num">${a.prev_p_o == null ? "—" : alPct(a.prev_p_o)}</td>
+      <td class="num">${Math.round(a.p50)} ${u}</td><td class="num">${Math.round(e.phen === "frio" ? a.p10 : a.p90)} ${u}</td>
+      <td>${det}</td><td>${a.peak_day ? alDay(a.peak_day) : ""}</td></tr>`;
+  }).join("");
+  const msgs = (e.messages || []).slice().reverse().map((m) => `<div class="sub">${m.kind} · ${new Date(m.t + "Z").toLocaleString("pt-PT")}</div>
+      <div class="al-msg">${m.text.replace(/<(?!\/?b>|\/?i>)[^>]+>/g, "")}</div>`).join("");
+  let figs = [];
+  try { figs = await api(`/api/alerts/${e.id}/figs`); } catch (err) { figs = []; }
+  const runSel = figs.length > 1 ? `<select id="al-run">${figs.map((f) => `<option value="${f.run}" ${f.run === AL.run ? "selected" : ""}>run ${alRun(f.run)}</option>`).join("")}</select>` : "";
+  const cur = figs.find((f) => f.run === AL.run) || figs[0];
+  const sent = e.notified ? " · alerta enviado para o Telegram"
+    : (e.status === "confirmado" ? " · ainda não enviado (Telegram por configurar?)" : "");
+  box.innerHTML = `<h2>${P.icon || ""} ${esc(P.name || e.phen)} · ${alDays(e.days)}</h2>
+    <div class="sub"><span class="al-tag ${alLevelOf(e) || "vigilancia"}">${AL_STATUS[e.status] || e.status}${e.level === "vermelho" ? " · vermelho" : ""}</span>
+      run ${alRun(e.last_run)} do ensemble do ECMWF${e.confirmed_run ? ` · confirmado na run ${alRun(e.confirmed_run)}` : ""}${sent}</div>
+    <table><thead><tr><th></th><th>Área</th><th>P(laranja)</th><th>P(vermelho)</th><th>Run anterior</th><th>Mediana</th>
+      <th>${e.phen === "frio" ? "Percentil 10" : "Percentil 90"}</th><th>Modelos determinísticos</th><th>Dia</th></tr></thead><tbody>${rows}</tbody></table>
+    <h3>Figuras ${runSel}</h3>
+    ${cur ? `<div class="al-figs">${cur.figs.map((f) => `<figure><img src="${f.url}" loading="lazy"><figcaption>${esc(f.caption)}</figcaption></figure>`).join("")}</div>`
+      : `<p class="hint">As figuras são feitas quando o evento é confirmado.</p>`}
+    ${msgs ? `<h3 style="margin-top:22px">Mensagens enviadas</h3>${msgs}` : ""}`;
+  const rs = $("#al-run");
+  if (rs) rs.onchange = (ev) => { AL.run = ev.target.value; renderAlertPanel(); };
+  $$("#al-panel .al-figs figure").forEach((f) => f.onclick = () => {
+    const z = document.createElement("div");
+    z.className = "al-zoom";
+    z.innerHTML = `<img src="${f.querySelector("img").src}">`;
+    z.onclick = () => z.parentNode.removeChild(z);
+    document.body.appendChild(z);
   });
 }
 
@@ -1129,6 +1248,8 @@ async function init() {
   });
   renderCmpModels();
   initDiffControls();
+  refreshAlertBadge();
+  setInterval(refreshAlertBadge, 300000);
 
   document.addEventListener("keydown", (e) => {
     if (["INPUT", "SELECT"].includes(document.activeElement.tagName)) return;

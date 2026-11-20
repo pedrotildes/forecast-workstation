@@ -20,6 +20,7 @@
     <button class="tab" data-tab="live">Satélite/Radar</button>
     <button class="tab" data-tab="events">Eventos</button>
     <button class="tab" data-tab="cases">Casos</button>
+    <button class="tab" data-tab="alerts">Avisos <span id="al-badge" class="al-badge hidden"></span></button>
   </nav>
   <div class="model-bar" id="model-bar">
     <div class="seg" id="models"></div>
@@ -280,6 +281,29 @@
     </section>
   </aside>
 
+  <!-- ======================= sidebar: alerts (python -m app.alerts) -->
+  <aside class="sidebar hidden" id="side-alerts">
+    <section>
+      <h3>Serviço de avisos</h3>
+      <div id="al-service" class="al-service"></div>
+    </section>
+    <section>
+      <h3>Eventos</h3>
+      <div id="al-list" class="ev-list"></div>
+    </section>
+    <section>
+      <h3>IPMA em vigor (laranja/vermelho)</h3>
+      <div id="al-ipma" class="al-ipma"></div>
+    </section>
+    <section class="hint">
+      Um evento fica <b>confirmado</b> — e o alerta segue para o Telegram — quando, numa área de aviso,
+      ≥ 60 % dos 50 membros do ensemble do ECMWF chegam ao critério laranja do IPMA (≥ 50 % para o vermelho),
+      a run anterior já mostrava ≥ 40 % e pelo menos metade dos modelos determinísticos (IFS, AIFS, GFS,
+      ICON-EU) chega perto do limiar. Abaixo disso fica <b>em vigilância</b>, só aqui.
+      Vento e chuva até 4 dias, calor e frio até 6. Não avalia chuva em 1 h, trovoada, neve nem nevoeiro.
+    </section>
+  </aside>
+
   <!-- ======================= sidebar: events (archive) -->
   <aside class="sidebar hidden" id="side-events">
     <section>
@@ -406,6 +430,7 @@
   <section class="viewer">
     <div id="livemap" class="hidden"></div>
     <div id="ev-panel" class="ev-panel hidden"></div>
+    <div id="al-panel" class="ev-panel al-panel hidden"></div>
     <div class="canvas" id="canvas">
       <img id="img" alt="">
       <div id="grid" class="grid hidden"></div>

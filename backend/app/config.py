@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 FROZEN = getattr(sys, "frozen", False)   # running from a PyInstaller bundle
 
 
@@ -34,6 +34,9 @@ CACHE_DIR = Path(os.environ.get("FORECAST_CACHE", _default_cache))
 # never touched by the automatic cache clean-up.
 ARCHIVE_DIR = Path(os.environ.get("FORECAST_ARCHIVE", _user_data_dir() / "archive"))
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+# Alert service (python -m app.alerts): state, figures and settings, shared like the archive.
+ALERTS_DIR = Path(os.environ.get("FORECAST_ALERTS", _user_data_dir() / "alerts"))
+ALERTS_DIR.mkdir(parents=True, exist_ok=True)
 GRIB_CACHE = CACHE_DIR / "grib"
 IMG_CACHE = CACHE_DIR / "img"
 

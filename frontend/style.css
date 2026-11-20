@@ -188,3 +188,33 @@ textarea { background: var(--panel-2); border: 1px solid var(--line); border-rad
   font: 700 12px/18px system-ui, sans-serif; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
 .xs-time select { flex: 1; }
 #snd-mode, #click-mode { flex-wrap: wrap; }
+
+/* ---- alerts tab */
+.al-badge { display: inline-block; min-width: 16px; padding: 0 5px; border-radius: 8px; font-size: 11px;
+  background: #f77f00; color: #111; font-weight: 700; margin-left: 4px; }
+.al-badge.red { background: #d00000; color: #fff; }
+.al-service { font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+.al-service b { color: var(--text); }
+.al-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.al-card { border-left: 4px solid #555; }
+.al-card.laranja { border-left-color: #f77f00; }
+.al-card.vermelho { border-left-color: #d00000; }
+.al-card.vigilancia { border-left-color: #8a94a6; }
+.al-card.old { opacity: .55; }
+.al-ipma { font-size: 12.5px; line-height: 1.5; }
+.al-ipma div { margin-bottom: 6px; }
+.al-tag { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 11px; font-weight: 700; margin-right: 4px; }
+.al-tag.laranja, .al-tag.orange { background: #f77f00; color: #111; }
+.al-tag.vermelho, .al-tag.red { background: #d00000; color: #fff; }
+.al-tag.vigilancia { background: #3a4252; color: #dbe2ee; }
+.al-tag.yellow { background: #ffd60a; color: #111; }
+.al-panel td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.al-msg { white-space: pre-wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 16px; max-width: 900px; font-size: 13px; line-height: 1.45; margin: 8px 0 18px; }
+.al-figs { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; max-width: 1500px; }
+.al-figs figure { margin: 0; background: #fff; border-radius: 6px; overflow: hidden; cursor: zoom-in; }
+.al-figs img { width: 100%; display: block; }
+.al-figs figcaption { background: var(--panel); color: var(--muted); font-size: 12px; padding: 6px 10px; }
+.al-zoom { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center;
+  justify-content: center; z-index: 50; cursor: zoom-out; }
+.al-zoom img { max-width: 96vw; max-height: 96vh; background: #fff; }
