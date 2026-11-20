@@ -31,14 +31,20 @@ MEMBER_PARAMS = {
     "tmin": ("mn2t3", "mn2t6"),
     "t2m": ("2t",),
     "msl": ("msl",),
+    "swh": ("swh",),                   # significant height of wind waves and swell (m)
+    "mwd": ("mwd",),                   # mean wave direction (degrees, where waves come from)
 }
+WAVE_NAMES = {"swh", "mwd"}
 # probability products of the "ep" file (24-h windows every 12 h)
 EP_PARAMS = {
     "p_gust54": "10fgg15", "p_gust90": "10fgg25",
     "p_tp10": "tpg10", "p_tp25": "tpg25", "p_tp50": "tpg50", "p_tp100": "tpg100",
     "p_t850_gt1p5": "ptsa_gt_1p5stdev", "p_t850_gt2": "ptsa_gt_2stdev",
     "p_t850_lt1p5": "ptsa_lt_1p5stdev", "p_t850_lt2": "ptsa_lt_2stdev",
+    # wave ensemble ("waef" ep file): probability of Hs above 2/4/6/8 m (instantaneous, 12-hourly)
+    "p_swh2": "swhg2", "p_swh4": "swhg4", "p_swh6": "swhg6", "p_swh8": "swhg8",
 }
+WAVE_EP = {"p_swh2", "p_swh4", "p_swh6", "p_swh8"}
 
 
 class EnsMembers(_ECMWFBase):
@@ -81,8 +87,28 @@ class EnsProb(_ECMWFBase):
                 f"{run:%Y%m%d%H}0000-240h-enfo-ep.{ext}")
 
 
+class WaveMembers(EnsMembers):
+    id = "ens_wave_members"
+    name = "ECMWF ENS (ondas)"
+
+    def _url(self, mirror, run, step, ext, s=None):
+        return (f"{mirror}/{run:%Y%m%d}/{run:%H}z/ifs/0p25/waef/"
+                f"{run:%Y%m%d%H}0000-{step}h-waef-ef.{ext}")
+
+
+class WaveProb(EnsProb):
+    id = "ens_wave_prob"
+    name = "ECMWF ENS ondas (probabilidades)"
+
+    def _url(self, mirror, run, step, ext, s=None):
+        return (f"{mirror}/{run:%Y%m%d}/{run:%H}z/ifs/0p25/waef/"
+                f"{run:%Y%m%d%H}0000-240h-waef-ep.{ext}")
+
+
 MEMBERS = EnsMembers()
 PROB = EnsProb()
+WAVE_MEMBERS = WaveMembers()
+WAVE_PROB = WaveProb()
 _SEM = asyncio.Semaphore(12)
 
 
@@ -122,9 +148,10 @@ async def members(run: dt.datetime, name: str, step: int) -> dict | None:
         return {"lats": z["lats"], "lons": z["lons"], "values": z["values"].astype(np.float32),
                 "units": str(z["units"])}
     params = MEMBER_PARAMS[name]
+    src = WAVE_MEMBERS if name in WAVE_NAMES else MEMBERS
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as c:
         try:
-            url, entries = await MEMBERS._index(c, run, step)
+            url, entries = await src._index(c, run, step)
         except FieldUnavailable:
             return None
         todo = [e for e in entries if e.get("param") in params and e.get("levtype") == "sfc"
@@ -154,7 +181,11 @@ async def members(run: dt.datetime, name: str, step: int) -> dict | None:
 
 async def ep_fields(run: dt.datetime, names: list[str]) -> dict:
     """Probability products: {name: {"windows": [(start_step, end_step)], "values": (n, ny, nx) %}}."""
-    p = ENS_CACHE / run.strftime("%Y%m%d%H") / "ep.npz"
+    wave = bool(set(names) & WAVE_EP)
+    if wave and not set(names) <= WAVE_EP:
+        raise ValueError("ep_fields: wave and atmospheric products come from different files")
+    src = WAVE_PROB if wave else PROB
+    p = ENS_CACHE / run.strftime("%Y%m%d%H") / ("ep_wave.npz" if wave else "ep.npz")
     if p.exists():
         z = np.load(p, allow_pickle=False)
         have = {k[:-5] for k in z.files if k.endswith("__val")}
@@ -163,7 +194,7 @@ async def ep_fields(run: dt.datetime, names: list[str]) -> dict:
                     **{n: {"windows": [tuple(w) for w in z[f"{n}__win"]],
                            "values": z[f"{n}__val"].astype(np.float32)} for n in names}}
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as c:
-        url, entries = await PROB._index(c, run, 240)
+        url, entries = await src._index(c, run, 240)
         want = {EP_PARAMS[n]: n for n in names}
         todo = [e for e in entries if e.get("param") in want]
         blobs = await asyncio.gather(*(_get(c, url, e) for e in todo))

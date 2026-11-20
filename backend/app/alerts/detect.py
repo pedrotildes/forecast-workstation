@@ -25,22 +25,22 @@ from ..config import ALERTS_DIR
 from ..models import MODELS, Domain, FieldUnavailable
 from . import criteria as C
 from . import ens
-from .areas import BOX, Sampler, areas
+from .areas import BOX, PointSet, Sampler, areas, land_points
 
 H = dt.timedelta(hours=1)
 RUNS_DIR = ALERTS_DIR / "runs"
 DOMAIN = Domain(BOX[0], BOX[1], BOX[2], BOX[3])
 
-HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7}   # days analysed after the run
+HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5}   # days analysed after the run
 SCREEN = 5.0            # % — ep probability below which member fields are not fetched
 TEMP_MARGIN = 4.0       # °C — IFS within this of the orange threshold -> fetch members
 WATCH_P = 0.2           # area-day probability (orange) that puts it "em vigilância"
-DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0}
+DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0, "mar": 1.0}
 DET_MODELS = {"vento": ("ecmwf", "gfs", "icon_eu"),
               "chuva": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "calor": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "frio": ("ecmwf", "aifs", "gfs", "icon_eu")}
-_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1}
+_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1}
 
 
 # ---------------------------------------------------------------- helpers
@@ -79,8 +79,19 @@ async def highland_points() -> np.ndarray:
     return np.array([g == "continente" and h >= C.HIGHLAND_M for g, h in zip(groups, pts)])
 
 
+def pointset(phen: str) -> PointSet:
+    """Sample points of a phenomenon: offshore for the sea state, the land points otherwise."""
+    if phen == "mar":
+        from .waves import sea_points
+        return sea_points()
+    return land_points()
+
+
 def point_thresholds(phen: str, highland: np.ndarray) -> np.ndarray:
     """(2, n_points): orange and red threshold at every sample point."""
+    if phen == "mar":
+        from .waves import thresholds
+        return thresholds()
     codes, groups = point_meta()
     out = np.zeros((2, len(codes)), np.float32)
     for i, (c, g) in enumerate(zip(codes, groups)):
@@ -296,8 +307,9 @@ async def deterministic(phen: str, days: list, log) -> dict:
 def _summary(phen, d, pts, lev_pts, thr_pts, det, codes_by_area) -> dict:
     """Per-area numbers of one day: probabilities, member statistics, deterministic support."""
     how = "max" if _HIGH_SIGN[phen] > 0 else "min"
-    lev_area = by_area(lev_pts.astype(np.float32), "max")          # (50,) per area
-    val_area = by_area(pts, how)                                    # (50,) per area
+    ps = pointset(phen)
+    lev_area = ps.by_area(lev_pts.astype(np.float32), "max")       # (50,) per area
+    val_area = ps.by_area(pts, how)                                 # (50,) per area
     out = {}
     for code, lev in lev_area.items():
         v = val_area[code]
@@ -390,13 +402,24 @@ async def analyse(run: dt.datetime, log=print) -> dict:
     except Exception as e:  # noqa: BLE001
         log(f"  triagem de temperatura (IFS) falhou: {e}")
 
+    # sea state: ep probabilities of the wave ensemble
+    out["failed"] = []
+    sea_days = []
+    try:
+        from . import waves
+        sea_days = await waves.screen(run, [d0 + dt.timedelta(days=i) for i in range(HORIZON["mar"])],
+                                      out, SCREEN)
+    except Exception as e:  # noqa: BLE001
+        log(f"  triagem do mar falhou: {e}")
+        out["failed"].append("mar")
+
     # ---- members (a phenomenon that fails is marked, so its events are not cancelled)
     ens_data = {}
-    out["failed"] = []
     jobs = [("vento", wind_days, lambda: _ens_wind(run, wind_days, log)),
             ("chuva", rain_days, lambda: _ens_rain(run, rain_days, log)),
             ("calor", temp_days["calor"], lambda: _ens_temp(run, temp_days["calor"], "tmax", log)),
-            ("frio", temp_days["frio"], lambda: _ens_temp(run, temp_days["frio"], "tmin", log))]
+            ("frio", temp_days["frio"], lambda: _ens_temp(run, temp_days["frio"], "tmin", log)),
+            ("mar", sea_days, lambda: waves.ens_daily(run, sea_days, log))]
     if "calor" not in out["screen"]:        # the temperature screening (IFS) failed
         out["failed"] += ["calor", "frio"]
     for phen, days, job in jobs:
@@ -424,8 +447,12 @@ async def analyse(run: dt.datetime, log=print) -> dict:
 
 async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
     thr = point_thresholds(phen, highland)
+    ps = pointset(phen)
+    slices = ps.slices
     days = sorted(per_day)
-    lev = {d: levels(per_day[d]["pts"], thr, phen) for d in days}       # (50, npts)
+    # sea state: levels already computed per member (south-easterly swell rule in the Algarve)
+    lev = {d: per_day[d]["lev"] if "lev" in per_day[d] else levels(per_day[d]["pts"], thr, phen)
+           for d in days}                                                   # (50, npts)
     if phen in ("calor", "frio"):          # ≥ 48 h: the level must hold on two consecutive days
         pers = {}
         for d in days:
@@ -435,14 +462,19 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
         lev = pers
     # deterministic models only where the ensemble sees something
     def max_p(levarr):
-        la = by_area(levarr.astype(np.float32), "max")
+        la = ps.by_area(levarr.astype(np.float32), "max")
         return max((float(np.mean(v >= 1)) for v in la.values()), default=0.0)
 
     flag_days = [d for d in days if max_p(lev[d]) >= WATCH_P]
-    det = await deterministic(phen, flag_days, log) if flag_days else {}
+    if phen == "mar":
+        from . import waves
+        det = await waves.deterministic(flag_days, log) if flag_days else {}
+    else:
+        det = await deterministic(phen, flag_days, log) if flag_days else {}
     sig = {}
     for d in days:
-        sig[d.isoformat()] = _summary(phen, d, per_day[d]["pts"], lev[d], thr, det, slices)
+        sig[d.isoformat()] = _summary(phen, d, per_day[d]["pts"], lev[d], per_day[d].get("thr", thr),
+                                      det, slices)
     out["signals"][phen] = sig
     out.setdefault("det_runs", {})[phen] = {m: v["run"] for m, v in det.items()}
     # arrays for the figures
@@ -453,6 +485,8 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
         save[f"grid_{k}"] = g.astype(np.float16)
         save[f"pts_{k}"] = per_day[d]["pts"].astype(np.float16)
         save[f"lev_{k}"] = lev[d]
+        if "thr" in per_day[d]:                 # sea state: thresholds of the day (SE swell rule)
+            save[f"thr_{k}"] = per_day[d]["thr"]
         if "series" in per_day[d]:
             save[f"series_{k}"] = per_day[d]["series"].astype(np.float16)
             save[f"steps_{k}"] = np.array(per_day[d]["steps"])

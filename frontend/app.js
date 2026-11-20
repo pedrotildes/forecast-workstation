@@ -702,7 +702,7 @@ const alRun = (iso) => {
 };
 const alPct = (p) => `${Math.round(100 * (p || 0))}%`;
 const alLevelOf = (e) => e.status === "confirmado" ? (e.level || "laranja") : e.status === "vigilancia" ? "vigilancia" : "";
-const AL_MODELS = { ecmwf: "IFS", aifs: "AIFS", gfs: "GFS", icon_eu: "ICON-EU" };
+const AL_MODELS = { ecmwf: "IFS", aifs: "AIFS", gfs: "GFS", icon_eu: "ICON-EU", ifs_wave: "IFS", gfs_wave: "GFS-Wave" };
 
 async function refreshAlertBadge() {
   try {
@@ -768,13 +768,14 @@ async function renderAlertPanel() {
   }
   const P = d.phenomena[e.phen] || {};
   const u = { vento: "km/h", chuva: "mm", calor: "°C", frio: "°C", mar: "m" }[e.phen] || "";
+  const fv = (v) => (e.phen === "mar" ? Number(v).toFixed(1) : Math.round(v));
   const rows = Object.entries(e.areas || {}).map(([c, a]) => {
     const det = Object.entries(a.det || {}).map(([m, x]) =>
-      `<span style="color:${MODEL_COLORS[m] || "#ccc"}">${AL_MODELS[m] || m} ${Math.round(x.v)}</span>`).join(" · ");
+      `<span style="color:${MODEL_COLORS[m.replace("_wave", "")] || "#ccc"}">${AL_MODELS[m] || m} ${fv(x.v)}</span>`).join(" · ");
     return `<tr><td><span class="al-tag ${a.status}">${a.status === "vigilancia" ? "vigilância" : a.status}</span></td>
       <td><b>${esc(d.areas[c] || c)}</b></td><td class="num">${alPct(a.p_o)}</td><td class="num">${alPct(a.p_r)}</td>
       <td class="num">${a.prev_p_o == null ? "—" : alPct(a.prev_p_o)}</td>
-      <td class="num">${Math.round(a.p50)} ${u}</td><td class="num">${Math.round(e.phen === "frio" ? a.p10 : a.p90)} ${u}</td>
+      <td class="num">${fv(a.p50)} ${u}</td><td class="num">${fv(e.phen === "frio" ? a.p10 : a.p90)} ${u}</td>
       <td>${det}</td><td>${a.peak_day ? alDay(a.peak_day) : ""}</td></tr>`;
   }).join("");
   const msgs = (e.messages || []).slice().reverse().map((m) => `<div class="sub">${m.kind} · ${new Date(m.t + "Z").toLocaleString("pt-PT")}</div>

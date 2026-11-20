@@ -254,16 +254,22 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   Meteorológicos» do IPMA): rajadas (91 km/h; 111 nas terras altas, acima de 700 m de
   orografia do modelo a 0,25°; Açores 101), precipitação em 6 h (41 mm), tempo quente e frio (limiares
   de cada distrito durante ≥ 48 h = dois dias seguidos); vermelho: > 130 km/h, > 60 mm e os
-  limiares vermelhos de cada distrito. Ficam de fora a chuva em 1 h, a trovoada, a neve, o
-  nevoeiro e a agitação marítima.
+  limiares vermelhos de cada distrito; agitação marítima (altura significativa das ondas
+  5 m, vermelho > 7 m; Açores 7 e 9 m; costa sul do Algarve com ondulação de sueste 3 e 5 m).
+  Ficam de fora a chuva em 1 h, a trovoada, a neve e o nevoeiro.
+- **Mar**: pontos 10–25 km ao largo de cada distrito costeiro, da Madeira (costa norte, costa
+  sul, Porto Santo) e de cada grupo dos Açores; cada ponto lê a célula de mar mais próxima.
+  Ensemble de ondas do ECMWF (`waef`, 50 membros, de 6 em 6 h, com a direção média para a regra
+  do Algarve) e, como modelos determinísticos, o modelo de ondas do IFS e o GFS-Wave da NOAA.
 - **Probabilidade**: os 50 membros do ensemble do ECMWF (`ef`, Open Data), lidos por intervalos
   de bytes e recortados a Portugal; uma área chega ao nível num membro quando algum dos seus
   pontos chega. Para poupar downloads, os membros só são lidos onde os produtos de
-  probabilidade do ECMWF (`ep`: rajadas ≥ 90 km/h, chuva ≥ 25 mm/24 h) ou a Tmáx/Tmín do IFS
-  mostram alguma hipótese.
+  probabilidade do ECMWF (`ep`: rajadas ≥ 90 km/h, chuva ≥ 25 mm/24 h, ondas acima de 2, 4 e
+  6 m) ou a Tmáx/Tmín do IFS mostram alguma hipótese.
 - **Certeza** (`app/alerts/events.py`, ajustável em `config.json`): ≥ 60 % dos membros
   (vermelho ≥ 50 %), ≥ 40 % já na run anterior, metade dos modelos determinísticos (IFS, AIFS,
-  GFS, ICON-EU) perto do limiar e até 4 dias de antecedência (calor e frio 6). Abaixo disso o
+  GFS, ICON-EU; no mar, IFS e GFS-Wave) perto do limiar e até 4 dias de antecedência
+  (calor e frio 6). Abaixo disso o
   evento fica «em vigilância», só na app. Um evento confirmado mantém-se enquanto a
   probabilidade não cair abaixo de 25 % (não há alertas e cancelamentos alternados).
 - **Mensagens**: alerta (texto + 7 figuras: probabilidade, valor alto provável, membros por dia,

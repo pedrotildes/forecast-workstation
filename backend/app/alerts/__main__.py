@@ -145,7 +145,8 @@ def housekeeping() -> None:
     from ..models.base import cleanup_cache
     cleanup_cache(3)
     ens.cleanup(6)
-    for base, keep in ((RUNS_DIR, 40),):
+    from .waves import WAVE_CACHE
+    for base, keep in ((RUNS_DIR, 40), (WAVE_CACHE / "ifs", 6), (WAVE_CACHE / "gfs", 8)):
         if base.exists():
             for d in sorted(p for p in base.iterdir() if p.is_dir())[:-keep]:
                 shutil.rmtree(d, ignore_errors=True)

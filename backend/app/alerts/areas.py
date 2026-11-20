@@ -206,3 +206,42 @@ class Sampler:
             with np.errstate(all="ignore"):
                 out[code] = f(sub, axis=-1) if sub.shape[-1] else np.full(sub.shape[:-1], np.nan)
         return out
+
+
+# ------------------------------------------------------------------ point sets
+class PointSet:
+    """Sample points of the warning areas for one kind of field, in a fixed order:
+    codes[i], groups[i], lats[i], lons[i]; ``slices[code]`` selects an area's points."""
+
+    def __init__(self, entries: list[tuple[str, str, float, float]], name: str):
+        self.name = name
+        self.codes = [e[0] for e in entries]
+        self.groups = [e[1] for e in entries]
+        self.lats = np.array([e[2] for e in entries], float)
+        self.lons = np.array([e[3] for e in entries], float)
+        self.slices: dict[str, slice] = {}
+        for i, c in enumerate(self.codes):
+            s = self.slices.get(c)
+            self.slices[c] = slice(s.start if s else i, i + 1)
+
+    def __len__(self) -> int:
+        return len(self.codes)
+
+    def by_area(self, arr: np.ndarray, how: str = "max") -> dict[str, np.ndarray]:
+        """(..., n_points) -> {code: (...)} worst value over each area's points."""
+        out = {}
+        for code, sl in self.slices.items():
+            sub = arr[..., sl]
+            with np.errstate(all="ignore"):
+                out[code] = np.nanmax(sub, -1) if how == "max" else np.nanmin(sub, -1)
+        return out
+
+    def label(self, code: str) -> tuple[float, float]:
+        sl = self.slices[code]
+        return float(self.lats[sl].mean()), float(self.lons[sl].mean())
+
+
+@lru_cache(maxsize=1)
+def land_points() -> PointSet:
+    """The points read by the Sampler (bilinear), in the same order."""
+    return PointSet([(a.code, a.group, la, lo) for a in areas() for la, lo in a.points], "land")

@@ -28,20 +28,30 @@ from ..models import MODELS, FieldUnavailable
 from ..regions import CITIES, REGIONS
 from . import criteria as C
 from .areas import areas, by_code, district_geometry
-from .detect import DOMAIN, RUNS_DIR, by_area, levels, sampler_for
+from .detect import DOMAIN, RUNS_DIR, pointset
 from .messages import MODEL_SHORT, fmt_day, fmt_days, fmt_run, pct, unit
 
 FIG_DIR = ALERTS_DIR / "figs"
 H = dt.timedelta(hours=1)
 REGION_OF = {"continente": "portugal", "madeira": "madeira", "acores": "azores"}
 LEVEL_COLOR = {"vermelho": "#d00000", "laranja": "#f77f00", "vigilancia": "#555555", None: "#555555"}
-MODEL_COLOR = {"ecmwf": "#1d3557", "aifs": "#6a4c93", "gfs": "#2a9d8f", "icon_eu": "#e76f51"}
+MODEL_COLOR = {"ecmwf": "#1d3557", "aifs": "#6a4c93", "gfs": "#2a9d8f", "icon_eu": "#e76f51",
+               "ifs_wave": "#1d3557", "gfs_wave": "#2a9d8f"}
+WAVE_FILL = Fill([1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 12],
+                 _interp(["#e0f3f8", "#abd9e9", "#74add1", "#4575b4", "#91cf60", "#fee08b", "#fdae61",
+                          "#f46d43", "#d73027", "#a50026", "#7a0177", "#49006a"], 14),
+                 extend="max", over="#000000", transparent_under=True)
 PROB_FILL = Fill([10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
                  _interp(["#fff3b0", "#ffd166", "#f8961e", "#f3722c", "#e63946", "#9d0208",
                           "#6a040f", "#3c096c"], 9), extend="neither", transparent_under=True)
-VAR_OF = {"vento": "gust", "chuva": "precip", "calor": "tmax_day", "frio": "tmin_day"}
-HOW = {"vento": "max", "chuva": "max", "calor": "max", "frio": "min"}
+VAR_OF = {"vento": "gust", "chuva": "precip", "calor": "tmax_day", "frio": "tmin_day", "mar": "swh"}
+HOW = {"vento": "max", "chuva": "max", "calor": "max", "frio": "min", "mar": "max"}
 FOOT = "Dados: © ECMWF Open Data (CC BY 4.0), NOAA GFS, DWD ICON-EU · Critérios de aviso: IPMA"
+FOOT_SEA = "Dados: © ECMWF Open Data (CC BY 4.0, ondas: ensemble e IFS), NOAA GFS-Wave · Critérios de aviso: IPMA"
+
+
+def foot(phen: str) -> str:
+    return FOOT_SEA if phen == "mar" else FOOT
 
 
 # ---------------------------------------------------------------- data
@@ -61,12 +71,8 @@ def load_det(run_iso: str, phen: str) -> dict:
         return {}
 
 
-def area_slices() -> dict[str, slice]:
-    out, k = {}, 0
-    for a in areas():
-        out[a.code] = slice(k, k + len(a.points))
-        k += len(a.points)
-    return out
+def area_slices(phen: str = "vento") -> dict[str, slice]:
+    return pointset(phen).slices
 
 
 @lru_cache(maxsize=8)
@@ -100,8 +106,10 @@ def area_grid(lats, lons) -> np.ndarray:
 def threshold_grid(phen: str, lats, lons, region_id: str) -> np.ndarray:
     """(2, ny, nx) orange/red thresholds for the probability map (NaN where not defined)."""
     ny, nx = len(lats), len(lons)
-    if phen in ("vento", "chuva"):
-        t = (C.GUST_AZORES if region_id == "azores" else C.GUST) if phen == "vento" else C.RAIN6
+    if phen in ("vento", "chuva", "mar"):
+        az = region_id == "azores"
+        t = {"vento": C.GUST_AZORES if az else C.GUST, "chuva": C.RAIN6,
+             "mar": C.WAVES_AZORES if az else C.WAVES}[phen]
         return np.stack([np.full((ny, nx), t["laranja"]), np.full((ny, nx), t["vermelho"])]).astype(np.float32)
     ag = area_grid(lats, lons)
     out = np.full((2, ny, nx), np.nan, np.float32)
@@ -133,7 +141,8 @@ def _labels(ev: dict, region_id: str) -> tuple[list, list]:
             continue
         col = LEVEL_COLOR[a["status"]]
         name = ar.name.split(" — ")[-1]
-        pts.append((ar.label[1], ar.label[0], f"{name}\n{pct(a['p_o'])}", col))
+        la, lo = pointset("mar").label(code) if ev["phen"] == "mar" else ar.label
+        pts.append((lo, la, f"{name}\n{pct(a['p_o'])}", col))
         if a["status"] in ("laranja", "vermelho") and (g := district_geometry(code)) is not None:
             geoms.append((g, col))
     return pts, geoms
@@ -156,7 +165,8 @@ def prob_map(ev: dict, z: dict, region_id: str) -> bytes:
     r = REGIONS[region_id]
     what = {"vento": f"rajada ≥ {C.fmt_threshold('vento', (C.GUST_AZORES if region_id == 'azores' else C.GUST)['laranja'])}",
             "chuva": "≥ 41 mm em 6 h", "calor": "Tmáx ≥ limiar laranja do distrito (≥ 48 h no texto)",
-            "frio": "Tmín ≤ limiar laranja do distrito"}[phen]
+            "frio": "Tmín ≤ limiar laranja do distrito",
+            "mar": f"ondas (Hs) ≥ {(C.WAVES_AZORES if region_id == 'azores' else C.WAVES)['laranja']:.0f} m"}[phen]
     job = {"region": region_id, "lats": lats, "lons": lons, "layers": [
         {"type": "fill", "var": "t2m", "data": p, "fill_style": PROB_FILL,
          "label": f"Probabilidade (%) de {what} — máximo nos dias do evento"},
@@ -169,7 +179,7 @@ def prob_map(ev: dict, z: dict, region_id: str) -> bytes:
                    "layers": "Sombreado: em cada ponto · linhas finas: 50 % e 80 % · número: na área "
                              "(algum ponto chega ao laranja) · contorno: distrito confirmado",
                    "right1": C.PHENOMENA[phen]["name"], "right2": r.name},
-        "footer": FOOT}
+        "footer": foot(phen)}
     png, _ = render_job(job)
     return png
 
@@ -185,17 +195,23 @@ def high_map(ev: dict, z: dict, region_id: str) -> bytes:
     var = VAR_OF[phen]
     pts, geoms = _labels(ev, region_id)
     what = {"vento": "rajada máxima do dia (km/h)", "chuva": "maior precipitação em 6 h no dia (mm)",
-            "calor": "temperatura máxima (°C)", "frio": "temperatura mínima (°C)"}[phen]
-    job = {"region": region_id, "lats": z["lats"], "lons": z["lons"], "layers": [
-        {"type": "fill", "var": var, "data": arr, "label": f"Percentil {q} dos 50 membros: {what}"},
-        {"type": "values", "var": var, "data": arr, "fmt": "%.0f"},
-        {"type": "areas", "geoms": geoms}],
+            "calor": "temperatura máxima (°C)", "frio": "temperatura mínima (°C)",
+            "mar": "altura significativa das ondas (m)"}[phen]
+    layers = [{"type": "fill", "var": var, "data": arr, "label": f"Percentil {q} dos 50 membros: {what}",
+               **({"fill_style": WAVE_FILL} if phen == "mar" else {})}]
+    if phen != "mar":                       # city values: the wave grids have nothing on land
+        layers.append({"type": "values", "var": var, "data": arr, "fmt": "%.0f"})
+    layers.append({"type": "areas", "geoms": geoms})
+    if phen == "mar":
+        layers.append({"type": "labels", "points": pts, "size": 8.0})
+    job = {"region": region_id, "lats": z["lats"], "lons": z["lons"], "layers": layers,
         "header": {"left1": f"ECMWF ENS (50 membros)   ·   Run {fmt_run(ev['last_run'])}",
                    "left2": f"Valor alto provável: {'só 1 em cada 10 membros abaixo' if phen == 'frio' else 'só 1 em cada 10 membros acima'} · "
                             f"{fmt_day(dt.date.fromisoformat(peak), True)}",
-                   "layers": f"Percentil {q} da {what} em cada ponto · valores nas cidades",
+                   "layers": f"Percentil {q} da {what} em cada ponto"
+                             + (" · probabilidade de laranja em cada área" if phen == "mar" else " · valores nas cidades"),
                    "right1": C.PHENOMENA[phen]["name"], "right2": REGIONS[region_id].name},
-        "footer": FOOT}
+        "footer": foot(phen)}
     png, _ = render_job(job)
     return png
 
@@ -212,7 +228,7 @@ def _top_areas(ev: dict, n: int = 4) -> list[str]:
 
 def boxes(ev: dict, z: dict, det: dict) -> bytes:
     phen = ev["phen"]
-    sl = area_slices()
+    sl = area_slices(phen)
     days = [str(d) for d in z["days"]]
     codes = _top_areas(ev, 4)
     n = len(codes)
@@ -272,9 +288,9 @@ def boxes(ev: dict, z: dict, det: dict) -> bytes:
 
 def plume(ev: dict, z: dict) -> bytes | None:
     phen = ev["phen"]
-    if phen not in ("vento", "chuva"):
+    if phen not in ("vento", "chuva", "mar"):
         return None
-    sl = area_slices()
+    sl = area_slices(phen)
     code = _top_areas(ev, 1)[0]
     run = dt.datetime.fromisoformat(ev["last_run"])
     times, rows = [], []
@@ -307,8 +323,11 @@ def plume(ev: dict, z: dict) -> bytes | None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %Hh"))
     ax.grid(alpha=0.3)
     ax.set_ylabel(f"{unit(phen)}" + (" em 6 h" if phen == "chuva" else ""))
+    if phen == "mar":
+        ax.set_ylim(bottom=0)
     ax.legend(fontsize=8.5, loc="upper left")
-    what = "rajada máxima (3 h)" if phen == "vento" else "precipitação nas 6 h anteriores"
+    what = {"vento": "rajada máxima (3 h)", "chuva": "precipitação nas 6 h anteriores",
+            "mar": "altura significativa das ondas"}[phen]
     ax.set_title(f"{by_code()[code].name}: {what}, os 50 membros · run {fmt_run(ev['last_run'])}",
                  loc="left", fontsize=11.5, fontweight="bold")
     fig.tight_layout()
@@ -406,28 +425,42 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
     pts, geoms = _labels(ev, region_id)
     pngs = []
     r = REGIONS[region_id]
-    for mid in ("ecmwf", "aifs", "gfs", "icon_eu"):
-        m = MODELS[mid]
-        if not m.covers_box(*r.extent) or (phen == "vento" and not m.has("gust")):
-            continue
-        try:
-            g = await _det_grid(mid, phen, day)
-        except Exception:  # noqa: BLE001
-            g = None
+    from . import waves
+    mids = ("ifs_wave", "gfs_wave") if phen == "mar" else ("ecmwf", "aifs", "gfs", "icon_eu")
+    for mid in mids:
+        if phen == "mar":
+            mname = {"ifs_wave": "ECMWF IFS (ondas)", "gfs_wave": "NOAA GFS-Wave"}[mid]
+            try:
+                g = await waves.det_grid(mid, dt.date.fromisoformat(day))
+            except Exception:  # noqa: BLE001
+                g = None
+        else:
+            m = MODELS[mid]
+            mname = m.name
+            if not m.covers_box(*r.extent) or (phen == "vento" and not m.has("gust")):
+                continue
+            try:
+                g = await _det_grid(mid, phen, day)
+            except Exception:  # noqa: BLE001
+                g = None
         if g is None:
             continue
         lats, lons, arr, run = g
-        job = {"region": region_id, "lats": lats, "lons": lons, "layers": [
-            {"type": "fill", "var": var, "data": arr, "label": f"{unit(phen)}"},
-            {"type": "values", "var": var, "data": arr, "fmt": "%.0f"},
-            {"type": "areas", "geoms": geoms}],
-            "header": {"left1": f"{m.name} · run {fmt_run(run.isoformat())}",
+        layers = [{"type": "fill", "var": var, "data": arr, "label": f"{unit(phen)}",
+                   **({"fill_style": WAVE_FILL} if phen == "mar" else {})}]
+        if phen != "mar":
+            layers.append({"type": "values", "var": var, "data": arr, "fmt": "%.0f"})
+        layers.append({"type": "areas", "geoms": geoms})
+        job = {"region": region_id, "lats": lats, "lons": lons, "layers": layers,
+            "header": {"left1": f"{mname} · run {fmt_run(run.isoformat())}",
                        "left2": fmt_day(dt.date.fromisoformat(day), True),
                        "layers": "", "right1": "", "right2": ""}, "footer": ""}
         png, _ = await asyncio.to_thread(render_job, job)
         pngs.append(png)
-    if len(pngs) < 2:
+    if not pngs:
         return None
+    if len(pngs) == 1:                      # e.g. the sea state today: only the IFS covers the whole day
+        return pngs[0]
     ncol = 2
     nrow = (len(pngs) + 1) // 2
     w, h = _png_size(pngs[0])
@@ -438,7 +471,8 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
         ax.imshow(imread(io.BytesIO(png), format="png"))
         ax.axis("off")
     what = {"vento": "rajada máxima do dia", "chuva": "maior precipitação em 6 h",
-            "calor": "temperatura máxima", "frio": "temperatura mínima"}[phen]
+            "calor": "temperatura máxima", "frio": "temperatura mínima",
+            "mar": "altura significativa máxima das ondas"}[phen]
     fig.suptitle(f"Modelos determinísticos: {what} ({unit(phen)})", x=0.01, ha="left", fontsize=13,
                  fontweight="bold", color="#0d1b2a")
     fig.subplots_adjust(left=0.005, right=0.995, top=0.95, bottom=0.005, wspace=0.01, hspace=0.01)
@@ -452,9 +486,9 @@ async def synoptic(ev: dict, z: dict) -> bytes | None:
     run = await m.best_run()
     steps = await m.list_steps(run)
     day = dt.date.fromisoformat(_peak_day(ev))
-    if phen in ("vento", "chuva"):
+    if phen in ("vento", "chuva", "mar"):
         # time of the highest median in the most likely area
-        sl = area_slices()
+        sl = area_slices(phen)
         code = _top_areas(ev, 1)[0]
         t_peak = dt.datetime(day.year, day.month, day.day, 12)
         k = f"series_{day.isoformat()}"

@@ -11,7 +11,8 @@ WEEK = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 WK = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 MON = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 LEVEL_ICON = {"vermelho": "🟥", "laranja": "🟧", "vigilancia": "▫️"}
-MODEL_SHORT = {"ecmwf": "IFS", "aifs": "AIFS", "gfs": "GFS", "icon_eu": "ICON-EU"}
+MODEL_SHORT = {"ecmwf": "IFS", "aifs": "AIFS", "gfs": "GFS", "icon_eu": "ICON-EU",
+               "ifs_wave": "IFS", "gfs_wave": "GFS-Wave"}
 ZONE_NAME = {"norte": "Norte", "centro": "Centro", "sul": "Sul"}
 
 
@@ -35,6 +36,11 @@ def fmt_days(days: list[str], long: bool = False) -> str:
 def fmt_run(iso: str) -> str:
     r = dt.datetime.fromisoformat(iso)
     return f"{r.day} {MON[r.month - 1]} {r:%H} UTC"
+
+
+def num(v: float, phen: str) -> str:
+    """Value as written in Portuguese: waves with one decimal (comma), the rest rounded."""
+    return f"{v:.1f}".replace(".", ",") if phen == "mar" else f"{v:.0f}"
 
 
 def pct(p: float) -> str:
@@ -66,7 +72,13 @@ def criterion_text(phen: str, groups: set[str]) -> str:
     if phen == "frio":
         return "Tmín abaixo do valor de cada distrito durante ≥ 48 h"
     if phen == "mar":
-        return "ondas 5–7 m, vermelho > 7 m (Açores 7–9 m, vermelho > 9 m)"
+        parts = []
+        if groups & {"continente", "madeira"}:
+            parts.append("ondas (Hs) 5–7 m, vermelho > 7 m; costa sul do Algarve com ondulação de "
+                         "sueste 3–5 m, vermelho > 5 m")
+        if "acores" in groups:
+            parts.append("Açores: 7–9 m, vermelho > 9 m")
+        return "; ".join(parts)
     return ""
 
 
@@ -95,18 +107,20 @@ def _area_line(phen: str, code: str, a: dict) -> str:
         s += f" (vermelho {pct(a['p_r'])})"
     if phen in ("calor", "frio"):
         s += f" · limiar {C.fmt_threshold(phen, a['thr_o'])}"
+    elif phen == "mar" and code == "FAR" and a.get("thr_o", 5) < 5:
+        s += " · ondulação de sueste (limiar 3 m)"
     return s
 
 
 def _values_line(phen: str, code: str, a: dict) -> str:
     ar = by_code()[code]
     u = unit(phen)
-    tail = (f"1 em cada 10 membros abaixo de {a['p10']:.0f} {u}" if phen == "frio"
-            else f"1 em cada 10 membros acima de {a['p90']:.0f} {u}")
-    s = f"<b>{esc(ar.name)}</b>: mediana {a['p50']:.0f} {u} · {tail}"
+    tail = (f"1 em cada 10 membros abaixo de {num(a['p10'], phen)} {u}" if phen == "frio"
+            else f"1 em cada 10 membros acima de {num(a['p90'], phen)} {u}")
+    s = f"<b>{esc(ar.name)}</b>: mediana {num(a['p50'], phen)} {u} · {tail}"
     det = a.get("det") or {}
     if det:
-        s += "\n   modelos: " + " · ".join(f"{MODEL_SHORT.get(m, m)} {x['v']:.0f}"
+        s += "\n   modelos: " + " · ".join(f"{MODEL_SHORT.get(m, m)} {num(x['v'], phen)}"
                                          for m, x in sorted(det.items(), key=lambda kv: -kv[1]["v"]
                                                              if phen != "frio" else kv[1]["v"]))
         s += f" {u}"
@@ -165,10 +179,13 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
     lines += ["", "<b>Porquê esta certeza</b>"]
     if a0 is not None:
         prev = a0.get("prev_p_o")
+        nd = len(a0.get("det", {}))
         sup = sum(1 for x in a0.get("det", {}).values() if x.get("near"))
+        dtxt = (f"{sup} de {nd} modelos determinísticos perto ou acima do limiar." if nd
+                else "Sem modelos determinísticos para comparar (exigida probabilidade maior).")
         lines.append(f"Run {fmt_run(ev['last_run'])}"
                      + (f"; na run anterior {pct(prev)} em {esc(by_code()[c0].name)}" if prev is not None else "")
-                     + f". {sup} de {len(a0.get('det', {}))} modelos determinísticos perto ou acima do limiar.")
+                     + ". " + dtxt)
     lines += ["", _official_line(ev, official),
               f"Critério IPMA: {criterion_text(phen, groups)}."]
     return "\n".join(lines)

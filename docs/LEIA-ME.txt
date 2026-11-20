@@ -35,6 +35,16 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.1 (20/11/2026)
+  • Avisos: também a agitação marítima (altura significativa das ondas
+    ≥ 5 m para laranja e > 7 m para vermelho; Açores 7 e 9 m; costa sul do
+    Algarve com ondulação de sueste 3 e 5 m), ao largo de cada distrito
+    costeiro, da Madeira e dos Açores, com o ensemble de ondas do ECMWF e
+    os modelos de ondas do IFS e do GFS (GFS-Wave).
+  • Valores das ondas com uma casa decimal no separador «Avisos».
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.5.0 (20/11/2026)
   • Novo separador «Avisos»: acompanha os fenómenos extremos previstos
     para Portugal continental, a Madeira e os Açores (vento, chuva forte
