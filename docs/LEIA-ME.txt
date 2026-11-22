@@ -35,6 +35,19 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.2 (22/11/2026)
+  • Avisos: também a neve, com os critérios do IPMA por altitude
+    (abaixo de 1000 m: 6 cm laranja, mais de 15 cm vermelho; de 1000 a
+    1600 m: 11 e 30 cm; acima de 1600 m: 26 e 50 cm), em 24 h. Como a
+    grelha dos modelos alisa as serras, a neve é estimada à altitude de
+    cada distrito a partir da precipitação e da temperatura (2 m e
+    850 hPa) do ensemble do ECMWF e dos modelos IFS, AIFS, GFS e ICON-EU.
+    Continente e serras da Madeira.
+  • Nos avisos de vento e chuva, o ICON-EU passa a contar também no 3.º e
+    4.º dia (usa as runs de 00/06/12/18 UTC, que chegam às +120 h).
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.5.1 (20/11/2026)
   • Avisos: também a agitação marítima (altura significativa das ondas
     ≥ 5 m para laranja e > 7 m para vermelho; Açores 7 e 9 m; costa sul do

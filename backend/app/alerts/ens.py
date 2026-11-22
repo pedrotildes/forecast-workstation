@@ -33,7 +33,10 @@ MEMBER_PARAMS = {
     "msl": ("msl",),
     "swh": ("swh",),                   # significant height of wind waves and swell (m)
     "mwd": ("mwd",),                   # mean wave direction (degrees, where waves come from)
+    "t850": ("t",),                    # temperature at 850 hPa (snow: temperature aloft)
 }
+# fields on pressure levels: name -> level (hPa); the others are single-level ("sfc")
+MEMBER_LEVEL = {"t850": 850}
 WAVE_NAMES = {"swh", "mwd"}
 # probability products of the "ep" file (24-h windows every 12 h)
 EP_PARAMS = {
@@ -154,8 +157,10 @@ async def members(run: dt.datetime, name: str, step: int) -> dict | None:
             url, entries = await src._index(c, run, step)
         except FieldUnavailable:
             return None
-        todo = [e for e in entries if e.get("param") in params and e.get("levtype") == "sfc"
-                and e.get("type") == "pf"]
+        lev = MEMBER_LEVEL.get(name)
+        todo = [e for e in entries if e.get("param") in params and e.get("type") == "pf"
+                and (e.get("levtype") == "sfc" if lev is None
+                     else e.get("levtype") == "pl" and str(e.get("levelist")) == str(lev))]
         if not todo:
             return None
         todo.sort(key=lambda e: int(e.get("number", 0)))
@@ -165,7 +170,7 @@ async def members(run: dt.datetime, name: str, step: int) -> dict | None:
     units = fields[0].units
     if name == "tp" and units.strip() == "m":
         vals, units = vals * 1000.0, "mm"
-    elif name in ("tmax", "tmin", "t2m") and units.strip() == "K":
+    elif name in ("tmax", "tmin", "t2m", "t850") and units.strip() == "K":
         vals, units = vals - 273.15, "°C"
     elif name == "gust":
         vals, units = vals * 3.6, "km/h"

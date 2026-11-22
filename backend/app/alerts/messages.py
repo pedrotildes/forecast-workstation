@@ -48,13 +48,13 @@ def pct(p: float) -> str:
 
 
 def unit(phen: str) -> str:
-    return {"vento": "km/h", "chuva": "mm", "calor": "°C", "frio": "°C", "mar": "m"}[phen]
+    return {"vento": "km/h", "chuva": "mm", "calor": "°C", "frio": "°C", "mar": "m", "neve": "cm"}[phen]
 
 
 def value_what(phen: str) -> str:
     return {"vento": "rajada máxima", "chuva": "máximo de precipitação em 6 h",
             "calor": "temperatura máxima", "frio": "temperatura mínima",
-            "mar": "altura significativa das ondas"}[phen]
+            "mar": "altura significativa das ondas", "neve": "neve acumulada em 24 h"}[phen]
 
 
 def criterion_text(phen: str, groups: set[str]) -> str:
@@ -79,6 +79,9 @@ def criterion_text(phen: str, groups: set[str]) -> str:
         if "acores" in groups:
             parts.append("Açores: 7–9 m, vermelho > 9 m")
         return "; ".join(parts)
+    if phen == "neve":
+        return ("neve acumulada abaixo de 1000 m 6–15 cm (vermelho > 15), de 1000 a 1600 m 11–30 cm "
+                "(vermelho > 30), acima de 1600 m 26–50 cm (vermelho > 50); aqui, em 24 h")
     return ""
 
 
@@ -109,7 +112,17 @@ def _area_line(phen: str, code: str, a: dict) -> str:
         s += f" · limiar {C.fmt_threshold(phen, a['thr_o'])}"
     elif phen == "mar" and code == "FAR" and a.get("thr_o", 5) < 5:
         s += " · ondulação de sueste (limiar 3 m)"
+    elif phen == "neve" and a.get("z"):
+        s += f" · {alt_text(a['z'])} (limiar {C.fmt_threshold('neve', a['thr_o'])})"
     return s
+
+
+def alt_text(z: float) -> str:
+    """'a 1000 m', 'acima de 1600 m (1993 m)' — the altitude band of a snow value."""
+    z = int(round(z))
+    if z > 1600:
+        return f"acima de 1600 m ({z} m)"
+    return f"a {z} m"
 
 
 def _values_line(phen: str, code: str, a: dict) -> str:
@@ -118,6 +131,12 @@ def _values_line(phen: str, code: str, a: dict) -> str:
     tail = (f"1 em cada 10 membros abaixo de {num(a['p10'], phen)} {u}" if phen == "frio"
             else f"1 em cada 10 membros acima de {num(a['p90'], phen)} {u}")
     s = f"<b>{esc(ar.name)}</b>: mediana {num(a['p50'], phen)} {u} · {tail}"
+    if phen == "neve" and a.get("z"):
+        s = s.replace("</b>:", f"</b> ({alt_text(a['z'])}):", 1)
+        others = [b for b in a.get("bands", []) if b["z"] != a["z"] and b["p90"] >= 1]
+        if others:
+            s += "\n   " + " · ".join(f"{alt_text(b['z'])}: mediana {num(b['p50'], phen)}, "
+                                      f"1 em 10 acima de {num(b['p90'], phen)} {u}" for b in others)
     det = a.get("det") or {}
     if det:
         s += "\n   modelos: " + " · ".join(f"{MODEL_SHORT.get(m, m)} {num(x['v'], phen)}"
@@ -175,6 +194,9 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
                                                    for c, a in watch[:8]))
     lines += ["", f"<b>Valores previstos</b> ({value_what(phen)} na área):"]
     lines += [_values_line(phen, c, a) for c, a in conf[:3]]
+    if phen == "neve":
+        lines.append("<i>Neve estimada à altitude de cada faixa a partir da precipitação e da temperatura "
+                     "(2 m e 850 hPa) dos modelos: a grelha de 0,25° não chega às serras.</i>")
     c0, a0 = conf[0] if conf else (None, None)
     lines += ["", "<b>Porquê esta certeza</b>"]
     if a0 is not None:

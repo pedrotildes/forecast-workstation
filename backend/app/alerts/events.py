@@ -15,7 +15,7 @@ Certainty rule for an area-day at level L (orange or red):
 2. ≥ ``p_previous[L]`` in the previous ENS run (12 h earlier): the signal is consistent;
 3. at least ``det_support`` of the deterministic models available (IFS, AIFS, GFS,
    ICON-EU) come within a margin of the threshold;
-4. the day is within ``lead_days`` (wind and rain 4 days, heat and cold 6).
+4. the day is within ``lead_days`` (wind, rain, sea and snow 4 days, heat and cold 6).
 Once confirmed, an area keeps its level while its probability stays ≥ ``p_hold`` (so a
 small dip does not cancel and re-send the alert); new areas need the full rule.
 """
@@ -37,7 +37,7 @@ DEFAULTS = {
     "p_hold": {"laranja": 0.25, "vermelho": 0.25},
     "p_watch": 0.2,
     "det_support": 0.5,
-    "lead_days": {"vento": 4, "chuva": 4, "calor": 6, "frio": 6, "mar": 4},
+    "lead_days": {"vento": 4, "chuva": 4, "calor": 6, "frio": 6, "mar": 4, "neve": 4},
     "quiet_hours": [23, 8],                 # Lisbon time: alerts arrive silently (red ones ring)
     "ipma_levels": ["orange", "red"],       # official IPMA warnings that are relayed
 }
@@ -181,6 +181,7 @@ def update(st: dict, analysis: dict, prev_analysis: dict | None, cfg: dict,
                 if row["p_o"] > a["p_o"] or (row["p_o"] == a["p_o"] and row["p_r"] > a["p_r"]):
                     a.update({k: row[k] for k in ("p_o", "p_r", "p10", "p50", "p90", "max",
                                                   "thr_o", "thr_r", "det")})
+                    a.update({k: row[k] for k in ("z", "bands") if k in row})   # snow: altitude band
                     a["peak_day"] = day
                     a["prev_p_o"] = (prev_sig.get(day, {}).get(code) or {}).get("p_o")
             ev["areas"] = dict(sorted(areas.items(), key=lambda kv: (-_RANK[kv[1]["status"]],

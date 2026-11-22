@@ -8,8 +8,9 @@ IPMA writes integer ranges for observed values ("91 a 130 km/h"); model values a
 continuous, so a range "a–b" becomes ≥ a − 0.5 and "> b" becomes ≥ b + 0.5.
 
 Not used (the models cannot give them with confidence, or the data are missing):
-1-h rain (convective), thunderstorms, fog, snow depth by altitude band and the Azores
-mean-wind criterion. Heat and cold need ≥ 48 h: here, two consecutive days.
+1-h rain (convective), thunderstorms, fog and the Azores mean-wind criterion. Snow is
+evaluated on the mainland and in the mountains of Madeira (not in the Azores nor on the
+Madeira coasts). Heat and cold need ≥ 48 h: here, two consecutive days.
 """
 from __future__ import annotations
 
@@ -22,10 +23,11 @@ PHENOMENA = {
     "calor": {"name": "Tempo quente", "unit": "°C", "what": "temperatura máxima", "icon": "🌡️"},
     "frio": {"name": "Tempo frio", "unit": "°C", "what": "temperatura mínima", "icon": "🥶"},
     "mar": {"name": "Agitação marítima", "unit": "m", "what": "altura significativa das ondas", "icon": "🌊"},
+    "neve": {"name": "Neve", "unit": "cm", "what": "neve acumulada em 24 h", "icon": "❄️"},
 }
 # IPMA "awarenessTypeName" of each phenomenon (official warnings JSON)
 IPMA_TYPE = {"vento": "Vento", "chuva": "Precipitação", "calor": "Tempo Quente",
-             "frio": "Tempo Frio", "mar": "Agitação Marítima"}
+             "frio": "Tempo Frio", "mar": "Agitação Marítima", "neve": "Neve"}
 
 # ---------------------------------------------------------------- wind (max gust, km/h)
 GUST = {"laranja": 90.5, "vermelho": 130.5}
@@ -41,6 +43,25 @@ RAIN6 = {"laranja": 40.5, "vermelho": 60.5}             # same on the mainland a
 # ---------------------------------------------------------------- waves (Hs, m)
 WAVES = {"laranja": 5.0, "vermelho": 7.0}
 WAVES_AZORES = {"laranja": 7.0, "vermelho": 9.0}
+
+# ---------------------------------------------------------------- snow (cm accumulated)
+# «Queda de neve com acumulação» by altitude band (same table for the mainland, Madeira and
+# the Azores): below 1000 m orange 6–15, red > 15; 1000–1600 m orange 11–30, red > 30;
+# above 1600 m orange 26–50, red > 50. IPMA gives no period: here, 24 h (snow.py).
+SNOW_BANDS = (  # (lower altitude, upper altitude, thresholds)
+    (0.0, 1000.0, {"laranja": 5.5, "vermelho": 15.5}),
+    (1000.0, 1600.0, {"laranja": 10.5, "vermelho": 30.5}),
+    (1600.0, 9000.0, {"laranja": 25.5, "vermelho": 50.5}),
+)
+
+
+def snow(alt: float) -> dict:
+    """Orange/red snow thresholds (cm) at an altitude (m); a band boundary belongs to the lower band."""
+    for lo, hi, t in SNOW_BANDS:
+        if alt <= hi:
+            return t
+    return SNOW_BANDS[-1][2]
+
 
 # ---------------------------------------------------------------- heat / cold (°C)
 # area: (Tmin orange upper bound, Tmin red bound, Tmax orange lower bound, Tmax red bound)
@@ -91,6 +112,8 @@ def thresholds(phen: str, code: str, group: str) -> dict:
         return cold(code)
     if phen == "mar":
         return waves(group)
+    if phen == "neve":
+        return snow(0.0)
     raise KeyError(phen)
 
 
@@ -102,5 +125,7 @@ def fmt_threshold(phen: str, v: float) -> str:
         return f"{v + 0.5:.0f} °C"
     if phen == "mar":
         return f"{v:.0f} m"
+    if phen == "neve":
+        return f"{v + 0.5:.0f} cm"
     unit = PHENOMENA[phen]["unit"]
     return f"{v + 0.5:.0f} {unit}"

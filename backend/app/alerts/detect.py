@@ -31,16 +31,17 @@ H = dt.timedelta(hours=1)
 RUNS_DIR = ALERTS_DIR / "runs"
 DOMAIN = Domain(BOX[0], BOX[1], BOX[2], BOX[3])
 
-HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5}   # days analysed after the run
+HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5, "neve": 5}   # days analysed after the run
 SCREEN = 5.0            # % — ep probability below which member fields are not fetched
 TEMP_MARGIN = 4.0       # °C — IFS within this of the orange threshold -> fetch members
 WATCH_P = 0.2           # area-day probability (orange) that puts it "em vigilância"
-DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0, "mar": 1.0}
+DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0, "mar": 1.0,
+              "neve": 0.4}      # snow: a fraction of the threshold (6, 11 or 26 cm by altitude)
 DET_MODELS = {"vento": ("ecmwf", "gfs", "icon_eu"),
               "chuva": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "calor": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "frio": ("ecmwf", "aifs", "gfs", "icon_eu")}
-_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1}
+_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1, "neve": 1}
 
 
 # ---------------------------------------------------------------- helpers
@@ -84,6 +85,9 @@ def pointset(phen: str) -> PointSet:
     if phen == "mar":
         from .waves import sea_points
         return sea_points()
+    if phen == "neve":
+        from .snow import snow_points
+        return snow_points()
     return land_points()
 
 
@@ -91,6 +95,9 @@ def point_thresholds(phen: str, highland: np.ndarray) -> np.ndarray:
     """(2, n_points): orange and red threshold at every sample point."""
     if phen == "mar":
         from .waves import thresholds
+        return thresholds()
+    if phen == "neve":
+        from .snow import thresholds
         return thresholds()
     codes, groups = point_meta()
     out = np.zeros((2, len(codes)), np.float32)
@@ -287,13 +294,26 @@ async def _det_daily(model, run, phen, days) -> dict:
     return out
 
 
+async def det_run(m) -> dt.datetime:
+    """Run of a deterministic model for the alerts: its newest complete run, except that for
+    ICON-EU only the long runs count (00/06/12/18Z reach +120 h; 03/09/15/21Z stop at +48 h
+    and would leave days 3–4 without the model)."""
+    if m.id == "icon_eu":
+        for r in (await m.list_runs())[:6]:
+            if r.hour % 6 == 0:
+                steps = await m.list_steps(r)
+                if steps and steps[-1] >= m.last_nominal_step(r):
+                    return r
+    return await m.best_run()
+
+
 async def deterministic(phen: str, days: list, log) -> dict:
     """{model id: {"run": iso, "days": {day: (n_points,)}}} for the models that cover it."""
     res = {}
     for mid in DET_MODELS[phen]:
         m = MODELS[mid]
         try:
-            run = await m.best_run()
+            run = await det_run(m)
             vals = await _det_daily(m, run, phen, days)
         except Exception as e:  # noqa: BLE001 — a model that fails must not stop the alerts
             log(f"  {mid}: {e}")
@@ -329,16 +349,26 @@ def _summary(phen, d, pts, lev_pts, thr_pts, det, codes_by_area) -> dict:
                 continue
             mv = dd["days"][d][sl]
             ml = levels(mv, thr_pts[:, sl], phen)
-            m = DET_MARGIN[phen]
+            m = DET_MARGIN[phen] * (thr_pts[:, sl] if phen == "neve" else 1.0)
+            m0, m1 = (m[0], m[1]) if np.ndim(m) else (m, m)
             if _HIGH_SIGN[phen] > 0:
-                near, near_r = mv >= thr_pts[0, sl] - m, mv >= thr_pts[1, sl] - m
+                near, near_r = mv >= thr_pts[0, sl] - m0, mv >= thr_pts[1, sl] - m1
             else:
-                near, near_r = mv <= thr_pts[0, sl] + m, mv <= thr_pts[1, sl] + m
+                near, near_r = mv <= thr_pts[0, sl] + m0, mv <= thr_pts[1, sl] + m1
             with np.errstate(all="ignore"):
                 worst = float(np.nanmax(mv) if how == "max" else np.nanmin(mv))
             if np.isfinite(worst):
                 row["det"][mid] = {"v": round(worst, 1), "lev": int(ml.max()), "near": bool(near.any()),
                                    "near_r": bool(near_r.any())}
+        if phen == "neve":           # report the decisive altitude band, not a mix of bands
+            from .snow import band_summary
+            k, bands = band_summary(code, pts, lev_pts, thr_pts)
+            b = bands[k - sl.start]
+            row.update({x: b[x] for x in ("p10", "p50", "p90", "max", "thr_o", "thr_r")})
+            row["z"], row["bands"] = b["z"], bands
+            for mid, dd in det.items():
+                if mid in row["det"] and d in dd["days"] and np.isfinite(dd["days"][d][k]):
+                    row["det"][mid]["v"] = round(float(dd["days"][d][k]), 1)
         out[code] = row
     return out
 
@@ -413,13 +443,24 @@ async def analyse(run: dt.datetime, log=print) -> dict:
         log(f"  triagem do mar falhou: {e}")
         out["failed"].append("mar")
 
+    # snow: IFS estimate at the altitudes of each district
+    snow_days = []
+    try:
+        from . import snow
+        snow_days = await snow.screen(run, [d0 + dt.timedelta(days=i) for i in range(HORIZON["neve"])],
+                                      out, log)
+    except Exception as e:  # noqa: BLE001
+        log(f"  triagem da neve falhou: {e}")
+        out["failed"].append("neve")
+
     # ---- members (a phenomenon that fails is marked, so its events are not cancelled)
     ens_data = {}
     jobs = [("vento", wind_days, lambda: _ens_wind(run, wind_days, log)),
             ("chuva", rain_days, lambda: _ens_rain(run, rain_days, log)),
             ("calor", temp_days["calor"], lambda: _ens_temp(run, temp_days["calor"], "tmax", log)),
             ("frio", temp_days["frio"], lambda: _ens_temp(run, temp_days["frio"], "tmin", log)),
-            ("mar", sea_days, lambda: waves.ens_daily(run, sea_days, log))]
+            ("mar", sea_days, lambda: waves.ens_daily(run, sea_days, log)),
+            ("neve", snow_days, lambda: snow.ens_daily(run, snow_days, log))]
     if "calor" not in out["screen"]:        # the temperature screening (IFS) failed
         out["failed"] += ["calor", "frio"]
     for phen, days, job in jobs:
@@ -469,6 +510,9 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
     if phen == "mar":
         from . import waves
         det = await waves.deterministic(flag_days, log) if flag_days else {}
+    elif phen == "neve":
+        from . import snow
+        det = await snow.deterministic(flag_days, log) if flag_days else {}
     else:
         det = await deterministic(phen, flag_days, log) if flag_days else {}
     sig = {}
@@ -487,6 +531,8 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
         save[f"lev_{k}"] = lev[d]
         if "thr" in per_day[d]:                 # sea state: thresholds of the day (SE swell rule)
             save[f"thr_{k}"] = per_day[d]["thr"]
+        if "levgrid" in per_day[d]:             # snow: level on the grid (any altitude band)
+            save[f"levgrid_{k}"] = per_day[d]["levgrid"]
         if "series" in per_day[d]:
             save[f"series_{k}"] = per_day[d]["series"].astype(np.float16)
             save[f"steps_{k}"] = np.array(per_day[d]["steps"])

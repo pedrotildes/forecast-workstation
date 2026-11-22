@@ -255,8 +255,22 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   orografia do modelo a 0,25°; Açores 101), precipitação em 6 h (41 mm), tempo quente e frio (limiares
   de cada distrito durante ≥ 48 h = dois dias seguidos); vermelho: > 130 km/h, > 60 mm e os
   limiares vermelhos de cada distrito; agitação marítima (altura significativa das ondas
-  5 m, vermelho > 7 m; Açores 7 e 9 m; costa sul do Algarve com ondulação de sueste 3 e 5 m).
-  Ficam de fora a chuva em 1 h, a trovoada, a neve e o nevoeiro.
+  5 m, vermelho > 7 m; Açores 7 e 9 m; costa sul do Algarve com ondulação de sueste 3 e 5 m);
+  neve acumulada por faixa de altitude (abaixo de 1000 m 6 cm, vermelho > 15; 1000–1600 m 11 e
+  30 cm; acima de 1600 m 26 e 50 cm), em 24 h. Ficam de fora a chuva em 1 h, a trovoada e o nevoeiro.
+- **Neve** (`app/alerts/snow.py`): a grelha de 0,25° alisa as serras (a Serra da Estrela fica
+  com 865 m no IFS), por isso a neve não é lida do manto de neve dos modelos mas **estimada à
+  altitude de cada faixa** a partir da precipitação e da temperatura de cada ponto: temperatura
+  interpolada em altura entre os 2 m (na orografia do modelo) e os 850 hPa (a 1450 m), fração de
+  neve 1 a ≤ 0 °C e 0 a ≥ 2 °C, 1 cm por mm de água; o valor de um dia é a maior acumulação em
+  24 h que termina nele. Cada distrito é avaliado a 1000 m (ou menos, se não tiver terreno tão
+  alto), a 1600 m e acima, até à sua **altitude representativa**: a cota acima da qual tem pelo
+  menos 25 km² (modelo digital de terreno Copernicus GLO-90), para que um cume de poucos
+  hectares na fronteira não decida o aviso do distrito inteiro. Distritos do continente e
+  regiões montanhosas da Madeira; os Açores e as costas da Madeira ficam de fora. Validado com
+  o nevão de 20–21/12/2025: com a run de 19/12 00Z do ensemble, os seis distritos em laranja do
+  IPMA (Viana, Braga, Vila Real, Viseu, Guarda, Castelo Branco) tinham 62–100 % e os quatro em
+  amarelo (Porto, Bragança, Aveiro, Coimbra) 8–22 %.
 - **Mar**: pontos 10–25 km ao largo de cada distrito costeiro, da Madeira (costa norte, costa
   sul, Porto Santo) e de cada grupo dos Açores; cada ponto lê a célula de mar mais próxima.
   Ensemble de ondas do ECMWF (`waef`, 50 membros, de 6 em 6 h, com a direção média para a regra
@@ -265,11 +279,11 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   de bytes e recortados a Portugal; uma área chega ao nível num membro quando algum dos seus
   pontos chega. Para poupar downloads, os membros só são lidos onde os produtos de
   probabilidade do ECMWF (`ep`: rajadas ≥ 90 km/h, chuva ≥ 25 mm/24 h, ondas acima de 2, 4 e
-  6 m) ou a Tmáx/Tmín do IFS mostram alguma hipótese.
+  6 m), a Tmáx/Tmín do IFS ou a neve estimada pelo IFS (≥ 30 % do limiar) mostram alguma hipótese.
 - **Certeza** (`app/alerts/events.py`, ajustável em `config.json`): ≥ 60 % dos membros
   (vermelho ≥ 50 %), ≥ 40 % já na run anterior, metade dos modelos determinísticos (IFS, AIFS,
-  GFS, ICON-EU; no mar, IFS e GFS-Wave) perto do limiar e até 4 dias de antecedência
-  (calor e frio 6). Abaixo disso o
+  GFS, ICON-EU; no mar, IFS e GFS-Wave; na neve, a 40 % do limiar) perto do limiar e até 4 dias
+  de antecedência (calor e frio 6). Abaixo disso o
   evento fica «em vigilância», só na app. Um evento confirmado mantém-se enquanto a
   probabilidade não cair abaixo de 25 % (não há alertas e cancelamentos alternados).
 - **Mensagens**: alerta (texto + 7 figuras: probabilidade, valor alto provável, membros por dia,

@@ -33,6 +33,9 @@ _MAP = {
     "tcc": ("tcc", False), "lcc": ("lcc", False), "mcc": ("mcc", False),
     "hcc": ("hcc", False), "gust": (("10fg", "10fg3", "10fg6"), False),
     "tmax": (("mx2t3", "mx2t6"), False), "tmin": (("mn2t3", "mn2t6"), False),
+    # surface geopotential, only in the step-0 files of the IFS (not in ``native``: the maps and
+    # soundings do not ask for it; the alert service reads the orography with it)
+    "orog": ("z", False),
 }
 
 
@@ -202,6 +205,9 @@ class _ECMWFBase(Model):
             if f.units.strip() == "m":       # IFS: metres; AIFS: kg m-2 (= mm)
                 f.values = f.values * 1000.0
             f.units = "mm"
+        elif name == "orog" and "m**2" in f.units.replace(" ", ""):
+            f.values = f.values / 9.80665          # geopotential (m² s⁻²) -> m
+            f.units = "m"
         elif name in ("tcc", "lcc", "mcc", "hcc"):
             if float(f.values.max()) <= 1.01:
                 f.values = f.values * 100.0
