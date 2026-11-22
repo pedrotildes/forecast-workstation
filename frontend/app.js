@@ -767,7 +767,7 @@ async function renderAlertPanel() {
     return;
   }
   const P = d.phenomena[e.phen] || {};
-  const u = { vento: "km/h", chuva: "mm", calor: "°C", frio: "°C", mar: "m", neve: "cm" }[e.phen] || "";
+  const u = { vento: "km/h", chuva: "mm", chuva1h: "mm", calor: "°C", frio: "°C", mar: "m", neve: "cm" }[e.phen] || "";
   const fv = (v) => (e.phen === "mar" ? Number(v).toFixed(1) : Math.round(v));
   const rows = Object.entries(e.areas || {}).map(([c, a]) => {
     const det = Object.entries(a.det || {}).map(([m, x]) =>
@@ -788,7 +788,8 @@ async function renderAlertPanel() {
     : (e.status === "confirmado" ? " · ainda não enviado (Telegram por configurar?)" : "");
   box.innerHTML = `<h2>${P.icon || ""} ${esc(P.name || e.phen)} · ${alDays(e.days)}</h2>
     <div class="sub"><span class="al-tag ${alLevelOf(e) || "vigilancia"}">${AL_STATUS[e.status] || e.status}${e.level === "vermelho" ? " · vermelho" : ""}</span>
-      run ${alRun(e.last_run)} do ensemble do ECMWF${e.confirmed_run ? ` · confirmado na run ${alRun(e.confirmed_run)}` : ""}${sent}</div>
+      ${e.phen === "chuva1h" && e.src_run ? `ICON-EU-EPS (DWD), run ${alRun(e.src_run)} · análise da run ${alRun(e.last_run)} do ECMWF`
+        : `run ${alRun(e.last_run)} do ensemble do ECMWF`}${e.confirmed_run ? ` · confirmado na run ${alRun(e.confirmed_run)}` : ""}${sent}</div>
     <table><thead><tr><th></th><th>Área</th><th>P(laranja)</th><th>P(vermelho)</th><th>Run anterior</th><th>Mediana</th>
       <th>${e.phen === "frio" ? "Percentil 10" : "Percentil 90"}</th><th>Modelos determinísticos</th><th>Dia</th></tr></thead><tbody>${rows}</tbody></table>
     <h3>Figuras ${runSel}</h3>

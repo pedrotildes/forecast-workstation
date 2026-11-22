@@ -252,12 +252,26 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   áreas da Madeira e os 3 grupos dos Açores (vilas e pontos do interior), com os códigos do IPMA.
 - **Fenómenos e critérios** (`app/alerts/criteria.py`, página «Critérios de Emissão dos Avisos
   Meteorológicos» do IPMA): rajadas (91 km/h; 111 nas terras altas, acima de 700 m de
-  orografia do modelo a 0,25°; Açores 101), precipitação em 6 h (41 mm), tempo quente e frio (limiares
+  orografia do modelo a 0,25°; Açores 101), precipitação em 6 h (41 mm) e em 1 h (21 mm), tempo quente e frio (limiares
   de cada distrito durante ≥ 48 h = dois dias seguidos); vermelho: > 130 km/h, > 60 mm e os
-  limiares vermelhos de cada distrito; agitação marítima (altura significativa das ondas
+  limiares vermelhos de cada distrito, > 40 mm em 1 h; agitação marítima (altura significativa das ondas
   5 m, vermelho > 7 m; Açores 7 e 9 m; costa sul do Algarve com ondulação de sueste 3 e 5 m);
   neve acumulada por faixa de altitude (abaixo de 1000 m 6 cm, vermelho > 15; 1000–1600 m 11 e
-  30 cm; acima de 1600 m 26 e 50 cm), em 24 h. Ficam de fora a chuva em 1 h, a trovoada e o nevoeiro.
+  30 cm; acima de 1600 m 26 e 50 cm), em 24 h. Ficam de fora a trovoada e o nevoeiro.
+- **Chuva em 1 h** (`app/alerts/rain1h.py`): o ensemble do ECMWF só publica a precipitação de
+  3 em 3 h, por isso aqui o ensemble é o **ICON-EU-EPS do DWD** (40 membros, grelha icosaédrica
+  com células a ~10 km, precipitação horária até +48 h, runs de 6 em 6 h; cada ficheiro traz os
+  40 membros de um passo para a Europa, ~10 MB). Pontos: as células do ICON dentro de cada
+  distrito (~50 por distrito) e, na Madeira, a célula mais próxima de cada vila; os Açores ficam
+  fora do domínio do ICON-EU. Triagem exata: a chuva é acumulada desde o início da run, por isso
+  uma hora com ≥ 21 mm obriga a ≥ 21 mm no dia e nas 6 h que a contêm; primeiro lêem-se os totais
+  do dia, depois os de 6 h, e só as janelas de 6 h em que algum membro chega ao limiar laranja
+  descarregam os ficheiros horários (dia seco: 2 ficheiros). Modelos de apoio: os que têm chuva
+  horária, ICON-EU e GFS (margem 8 mm). Até 2 dias. Limitação: uma célula de 10–28 km recebe a
+  média da chuva; uma trovoada isolada pode dar 30–50 mm/h em poucos km² e a célula muito menos,
+  por isso o serviço vê sobretudo a chuva forte organizada (linhas de instabilidade, frentes
+  com convecção, depressões isoladas). Na tempestade Charles (11/11/2026, 12–13 UTC) o ICON-EU
+  deu 22 mm/h e o GFS 17 mm/h no distrito de Lisboa, a muito curto prazo.
 - **Neve** (`app/alerts/snow.py`): a grelha de 0,25° alisa as serras (a Serra da Estrela fica
   com 865 m no IFS), por isso a neve não é lida do manto de neve dos modelos mas **estimada à
   altitude de cada faixa** a partir da precipitação e da temperatura de cada ponto: temperatura
@@ -282,8 +296,8 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   6 m), a Tmáx/Tmín do IFS ou a neve estimada pelo IFS (≥ 30 % do limiar) mostram alguma hipótese.
 - **Certeza** (`app/alerts/events.py`, ajustável em `config.json`): ≥ 60 % dos membros
   (vermelho ≥ 50 %), ≥ 40 % já na run anterior, metade dos modelos determinísticos (IFS, AIFS,
-  GFS, ICON-EU; no mar, IFS e GFS-Wave; na neve, a 40 % do limiar) perto do limiar e até 4 dias
-  de antecedência (calor e frio 6). Abaixo disso o
+  GFS, ICON-EU; no mar, IFS e GFS-Wave; na neve, a 40 % do limiar; na chuva em 1 h, ICON-EU e
+  GFS) perto do limiar e até 4 dias de antecedência (calor e frio 6, chuva em 1 h 2). Abaixo disso o
   evento fica «em vigilância», só na app. Um evento confirmado mantém-se enquanto a
   probabilidade não cair abaixo de 25 % (não há alertas e cancelamentos alternados).
 - **Mensagens**: alerta (texto + 7 figuras: probabilidade, valor alto provável, membros por dia,

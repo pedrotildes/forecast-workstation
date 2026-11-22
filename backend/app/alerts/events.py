@@ -14,8 +14,12 @@ Certainty rule for an area-day at level L (orange or red):
 1. ENS probability ≥ ``p_confirm[L]`` in the current run;
 2. ≥ ``p_previous[L]`` in the previous ENS run (12 h earlier): the signal is consistent;
 3. at least ``det_support`` of the deterministic models available (IFS, AIFS, GFS,
-   ICON-EU) come within a margin of the threshold;
-4. the day is within ``lead_days`` (wind, rain, sea and snow 4 days, heat and cold 6).
+   ICON-EU; for rain in 1 h only ICON-EU and GFS, the ones with hourly rain) come within a
+   margin of the threshold;
+4. the day is within ``lead_days`` (wind, rain, sea and snow 4 days, heat and cold 6, rain
+   in 1 h 2: the hourly ensemble, ICON-EU-EPS, reaches +48 h).
+For rain in 1 h the ensemble is the DWD ICON-EU-EPS (40 members) instead of the ECMWF ENS;
+it is analysed with each ECMWF run, so "the previous run" is the analysis 12 h earlier.
 Once confirmed, an area keeps its level while its probability stays ≥ ``p_hold`` (so a
 small dip does not cancel and re-send the alert); new areas need the full rule.
 """
@@ -37,7 +41,7 @@ DEFAULTS = {
     "p_hold": {"laranja": 0.25, "vermelho": 0.25},
     "p_watch": 0.2,
     "det_support": 0.5,
-    "lead_days": {"vento": 4, "chuva": 4, "calor": 6, "frio": 6, "mar": 4, "neve": 4},
+    "lead_days": {"vento": 4, "chuva": 4, "calor": 6, "frio": 6, "mar": 4, "neve": 4, "chuva1h": 2},
     "quiet_hours": [23, 8],                 # Lisbon time: alerts arrive silently (red ones ring)
     "ipma_levels": ["orange", "red"],       # official IPMA warnings that are relayed
 }
@@ -188,6 +192,8 @@ def update(st: dict, analysis: dict, prev_analysis: dict | None, cfg: dict,
                                                                        -kv[1]["p_o"])))
             ev["days"] = sorted(cl_iso)
             ev["last_run"] = runs_iso
+            if analysis.get("src_runs", {}).get(phen):      # 1-h rain: the ICON-EU-EPS run
+                ev["src_run"] = analysis["src_runs"][phen]
             conf = [c for c, a in areas.items() if a["status"] in ("laranja", "vermelho")]
             level = max((areas[c]["status"] for c in conf), key=lambda s: _RANK[s], default=None)
             if conf and ev["status"] != "confirmado":
@@ -209,6 +215,8 @@ def update(st: dict, analysis: dict, prev_analysis: dict | None, cfg: dict,
         if ev["status"] == "confirmado":
             ev["status"], ev["level"] = "cancelado", None
             ev["last_run"] = runs_iso
+            if analysis.get("src_runs", {}).get(ev["phen"]):
+                ev["src_run"] = analysis["src_runs"][ev["phen"]]
             ev["history"].append({"run": runs_iso, "level": None, "conf": [], "watch": [], "p": {}})
             if ev.get("notified"):
                 notes.append({"event": ev["id"], "kind": "cancelamento", "why": ["sinal desapareceu"]})

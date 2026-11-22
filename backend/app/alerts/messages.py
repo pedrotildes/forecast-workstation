@@ -48,11 +48,13 @@ def pct(p: float) -> str:
 
 
 def unit(phen: str) -> str:
-    return {"vento": "km/h", "chuva": "mm", "calor": "°C", "frio": "°C", "mar": "m", "neve": "cm"}[phen]
+    return {"vento": "km/h", "chuva": "mm", "chuva1h": "mm", "calor": "°C", "frio": "°C", "mar": "m",
+            "neve": "cm"}[phen]
 
 
 def value_what(phen: str) -> str:
     return {"vento": "rajada máxima", "chuva": "máximo de precipitação em 6 h",
+            "chuva1h": "máximo de precipitação em 1 h",
             "calor": "temperatura máxima", "frio": "temperatura mínima",
             "mar": "altura significativa das ondas", "neve": "neve acumulada em 24 h"}[phen]
 
@@ -66,7 +68,9 @@ def criterion_text(phen: str, groups: set[str]) -> str:
             parts.append("Açores: rajadas 101–130 km/h, vermelho > 130 km/h")
         return "; ".join(parts)
     if phen == "chuva":
-        return "41–60 mm em 6 h, vermelho > 60 mm (a chuva em 1 h e a trovoada não são avaliadas)"
+        return "41–60 mm em 6 h, vermelho > 60 mm (a chuva em 1 h é avaliada à parte; a trovoada não)"
+    if phen == "chuva1h":
+        return "21–40 mm em 1 h, vermelho > 40 mm (continente e Madeira; os Açores ficam fora do ICON-EU-EPS)"
     if phen == "calor":
         return "Tmáx acima do valor de cada distrito durante ≥ 48 h"
     if phen == "frio":
@@ -83,6 +87,16 @@ def criterion_text(phen: str, groups: set[str]) -> str:
         return ("neve acumulada abaixo de 1000 m 6–15 cm (vermelho > 15), de 1000 a 1600 m 11–30 cm "
                 "(vermelho > 30), acima de 1600 m 26–50 cm (vermelho > 50); aqui, em 24 h")
     return ""
+
+
+def ens_label(phen: str) -> str:
+    """The ensemble behind a phenomenon's probabilities."""
+    return "ICON-EU-EPS do DWD, 40 membros" if phen == "chuva1h" else "ensemble ECMWF, 50 membros"
+
+
+def src_run(ev: dict) -> str:
+    """Run of the ensemble actually used (1-h rain: the ICON-EU-EPS run)."""
+    return ev.get("src_run") or ev["last_run"]
 
 
 def where(ev: dict, statuses=("laranja", "vermelho")) -> str:
@@ -176,8 +190,10 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
     head = {"alerta": "ALERTA", "atualizacao": "ATUALIZAÇÃO", "cancelamento": "CANCELADO",
             "fim": "TERMINOU"}[kind]
     if kind == "cancelamento":
+        src = (f"A run {fmt_run(src_run(ev))} do ICON-EU-EPS (DWD)" if phen == "chuva1h"
+               else f"A run {fmt_run(ev['last_run'])} do ensemble do ECMWF")
         return (f"✅ <b>{head} · {esc(P['name'])}</b>\n{fmt_days(ev['days'], True)}\n\n"
-                f"A run {fmt_run(ev['last_run'])} do ensemble do ECMWF já não mostra este evento "
+                f"{src} já não mostra este evento "
                 f"(nenhuma área com probabilidade ≥ 20 % de chegar ao laranja).")
     if kind == "fim":
         return (f"🏁 <b>{head} · {esc(P['name'])}</b> ({fmt_days(ev['days'])})\n"
@@ -187,7 +203,7 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
              f"<b>{fmt_days(ev['days'], True)}</b> · {where(ev)}"]
     if why and kind == "atualizacao":
         lines.append("<i>" + esc("; ".join(why)) + "</i>")
-    lines += ["", f"<b>Probabilidade de chegar ao laranja</b> (ensemble ECMWF, 50 membros):"]
+    lines += ["", f"<b>Probabilidade de chegar ao laranja</b> ({ens_label(phen)}):"]
     lines += [_area_line(phen, c, a) for c, a in conf]
     if watch:
         lines.append("Em vigilância: " + ", ".join(f"{esc(by_code()[c].name)} {pct(a['p_o'])}"
@@ -197,6 +213,9 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
     if phen == "neve":
         lines.append("<i>Neve estimada à altitude de cada faixa a partir da precipitação e da temperatura "
                      "(2 m e 850 hPa) dos modelos: a grelha de 0,25° não chega às serras.</i>")
+    if phen == "chuva1h":
+        lines.append("<i>Chuva numa hora em células de ~10 km (ICON-EU-EPS): um aguaceiro forte ou uma trovoada "
+                     "isolada pode dar muito mais num ponto do que a média da célula.</i>")
     c0, a0 = conf[0] if conf else (None, None)
     lines += ["", "<b>Porquê esta certeza</b>"]
     if a0 is not None:
@@ -205,8 +224,9 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
         sup = sum(1 for x in a0.get("det", {}).values() if x.get("near"))
         dtxt = (f"{sup} de {nd} modelos determinísticos perto ou acima do limiar." if nd
                 else "Sem modelos determinísticos para comparar (exigida probabilidade maior).")
-        lines.append(f"Run {fmt_run(ev['last_run'])}"
-                     + (f"; na run anterior {pct(prev)} em {esc(by_code()[c0].name)}" if prev is not None else "")
+        lines.append(f"{'ICON-EU-EPS, run' if phen == 'chuva1h' else 'Run'} {fmt_run(src_run(ev))}"
+                     + (f"; na {'análise' if phen == 'chuva1h' else 'run'} anterior {pct(prev)} em "
+                        f"{esc(by_code()[c0].name)}" if prev is not None else "")
                      + ". " + dtxt)
     lines += ["", _official_line(ev, official),
               f"Critério IPMA: {criterion_text(phen, groups)}."]

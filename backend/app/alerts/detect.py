@@ -11,6 +11,9 @@ rain where the ENS probability products ("ep") already show some chance of ≥ 9
 gusts / ≥ 25 mm in 24 h, heat and cold where the IFS forecast comes within a few degrees
 of the orange threshold. The deterministic models (IFS, AIFS, GFS, ICON-EU) are read only
 for the area-days the ensemble flags.
+
+Rain in 1 h is the exception: the ECMWF ENS has no hourly precipitation, so it comes from
+the 40 members of the DWD ICON-EU-EPS (rain1h.py), analysed together with each ECMWF run.
 """
 from __future__ import annotations
 
@@ -31,17 +34,19 @@ H = dt.timedelta(hours=1)
 RUNS_DIR = ALERTS_DIR / "runs"
 DOMAIN = Domain(BOX[0], BOX[1], BOX[2], BOX[3])
 
-HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5, "neve": 5}   # days analysed after the run
+HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5, "neve": 5,
+           "chuva1h": 2}        # days analysed after the run (1-h rain: hourly ICON-EU-EPS to +48 h)
 SCREEN = 5.0            # % — ep probability below which member fields are not fetched
 TEMP_MARGIN = 4.0       # °C — IFS within this of the orange threshold -> fetch members
 WATCH_P = 0.2           # area-day probability (orange) that puts it "em vigilância"
 DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0, "mar": 1.0,
-              "neve": 0.4}      # snow: a fraction of the threshold (6, 11 or 26 cm by altitude)
+              "neve": 0.4,      # snow: a fraction of the threshold (6, 11 or 26 cm by altitude)
+              "chuva1h": 8.0}
 DET_MODELS = {"vento": ("ecmwf", "gfs", "icon_eu"),
               "chuva": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "calor": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "frio": ("ecmwf", "aifs", "gfs", "icon_eu")}
-_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1, "neve": 1}
+_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1, "neve": 1, "chuva1h": 1}
 
 
 # ---------------------------------------------------------------- helpers
@@ -88,6 +93,9 @@ def pointset(phen: str) -> PointSet:
     if phen == "neve":
         from .snow import snow_points
         return snow_points()
+    if phen == "chuva1h":
+        from .rain1h import rain_points
+        return rain_points()
     return land_points()
 
 
@@ -98,6 +106,9 @@ def point_thresholds(phen: str, highland: np.ndarray) -> np.ndarray:
         return thresholds()
     if phen == "neve":
         from .snow import thresholds
+        return thresholds()
+    if phen == "chuva1h":
+        from .rain1h import thresholds
         return thresholds()
     codes, groups = point_meta()
     out = np.zeros((2, len(codes)), np.float32)
@@ -454,13 +465,16 @@ async def analyse(run: dt.datetime, log=print) -> dict:
         out["failed"].append("neve")
 
     # ---- members (a phenomenon that fails is marked, so its events are not cancelled)
+    from . import rain1h
     ens_data = {}
     jobs = [("vento", wind_days, lambda: _ens_wind(run, wind_days, log)),
             ("chuva", rain_days, lambda: _ens_rain(run, rain_days, log)),
             ("calor", temp_days["calor"], lambda: _ens_temp(run, temp_days["calor"], "tmax", log)),
             ("frio", temp_days["frio"], lambda: _ens_temp(run, temp_days["frio"], "tmin", log)),
             ("mar", sea_days, lambda: waves.ens_daily(run, sea_days, log)),
-            ("neve", snow_days, lambda: snow.ens_daily(run, snow_days, log))]
+            ("neve", snow_days, lambda: snow.ens_daily(run, snow_days, log)),
+            # 1-h rain: hourly ICON-EU-EPS, which screens its own days (exactly, see rain1h.py)
+            ("chuva1h", [run], lambda: rain1h.ens_daily(run, out, log))]
     if "calor" not in out["screen"]:        # the temperature screening (IFS) failed
         out["failed"] += ["calor", "frio"]
     for phen, days, job in jobs:
@@ -469,7 +483,7 @@ async def analyse(run: dt.datetime, log=print) -> dict:
         try:
             ens_data[phen] = await job()
         except Exception as e:  # noqa: BLE001
-            log(f"  {phen}: membros do ENS falharam ({e})")
+            log(f"  {phen}: membros do {'ICON-EU-EPS' if phen == 'chuva1h' else 'ENS'} falharam ({e})")
             out["failed"].append(phen)
 
     # ---- levels, probabilities, deterministic support
@@ -513,6 +527,9 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
     elif phen == "neve":
         from . import snow
         det = await snow.deterministic(flag_days, log) if flag_days else {}
+    elif phen == "chuva1h":
+        from . import rain1h
+        det = await rain1h.deterministic(flag_days, log) if flag_days else {}
     else:
         det = await deterministic(phen, flag_days, log) if flag_days else {}
     sig = {}
@@ -538,6 +555,8 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
             save[f"steps_{k}"] = np.array(per_day[d]["steps"])
     ref = per_day[days[0]]
     save["lats"], save["lons"] = ref["lats"], ref["lons"]
+    if "src_run" in ref:                        # 1-h rain: the ICON-EU-EPS run used
+        save["src_run"] = np.array(ref["src_run"])
     np.savez_compressed(rdir / f"{phen}.npz", **save)
     with open(rdir / f"{phen}_det.json", "w") as fh:
         json.dump({m: {"run": v["run"], "name": v["name"],

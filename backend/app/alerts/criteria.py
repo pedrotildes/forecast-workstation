@@ -8,9 +8,10 @@ IPMA writes integer ranges for observed values ("91 a 130 km/h"); model values a
 continuous, so a range "a–b" becomes ≥ a − 0.5 and "> b" becomes ≥ b + 0.5.
 
 Not used (the models cannot give them with confidence, or the data are missing):
-1-h rain (convective), thunderstorms, fog and the Azores mean-wind criterion. Snow is
-evaluated on the mainland and in the mountains of Madeira (not in the Azores nor on the
-Madeira coasts). Heat and cold need ≥ 48 h: here, two consecutive days.
+thunderstorms, fog and the Azores mean-wind criterion. Rain in 1 h comes from an hourly
+ensemble that covers the mainland and Madeira only (rain1h.py). Snow is evaluated on the
+mainland and in the mountains of Madeira (not in the Azores nor on the Madeira coasts).
+Heat and cold need ≥ 48 h: here, two consecutive days.
 """
 from __future__ import annotations
 
@@ -19,14 +20,15 @@ LEVEL_NAME = {"laranja": "Laranja", "vermelho": "Vermelho", "amarelo": "Amarelo"
 
 PHENOMENA = {
     "vento": {"name": "Vento forte", "unit": "km/h", "what": "rajada máxima", "icon": "💨"},
-    "chuva": {"name": "Precipitação forte", "unit": "mm/6 h", "what": "precipitação em 6 h", "icon": "🌧️"},
+    "chuva": {"name": "Precipitação forte (6 h)", "unit": "mm/6 h", "what": "precipitação em 6 h", "icon": "🌧️"},
+    "chuva1h": {"name": "Precipitação forte (1 h)", "unit": "mm/1 h", "what": "precipitação em 1 h", "icon": "☔"},
     "calor": {"name": "Tempo quente", "unit": "°C", "what": "temperatura máxima", "icon": "🌡️"},
     "frio": {"name": "Tempo frio", "unit": "°C", "what": "temperatura mínima", "icon": "🥶"},
     "mar": {"name": "Agitação marítima", "unit": "m", "what": "altura significativa das ondas", "icon": "🌊"},
     "neve": {"name": "Neve", "unit": "cm", "what": "neve acumulada em 24 h", "icon": "❄️"},
 }
 # IPMA "awarenessTypeName" of each phenomenon (official warnings JSON)
-IPMA_TYPE = {"vento": "Vento", "chuva": "Precipitação", "calor": "Tempo Quente",
+IPMA_TYPE = {"vento": "Vento", "chuva": "Precipitação", "chuva1h": "Precipitação", "calor": "Tempo Quente",
              "frio": "Tempo Frio", "mar": "Agitação Marítima", "neve": "Neve"}
 
 # ---------------------------------------------------------------- wind (max gust, km/h)
@@ -37,8 +39,9 @@ GUST_AZORES = {"laranja": 100.5, "vermelho": 130.5}
 # shows as ~790 m), so ≥ 700 m here picks the high plateaus of Trás-os-Montes and the Beiras.
 HIGHLAND_M = 700.0
 
-# ---------------------------------------------------------------- rain (mm in 6 h)
+# ---------------------------------------------------------------- rain (mm in 6 h / in 1 h)
 RAIN6 = {"laranja": 40.5, "vermelho": 60.5}             # same on the mainland and the islands
+RAIN1 = {"laranja": 20.5, "vermelho": 40.5}             # 21–40 mm in 1 h, red > 40 (all regions)
 
 # ---------------------------------------------------------------- waves (Hs, m)
 WAVES = {"laranja": 5.0, "vermelho": 7.0}
@@ -106,6 +109,8 @@ def thresholds(phen: str, code: str, group: str) -> dict:
         return gust(code, group)
     if phen == "chuva":
         return RAIN6
+    if phen == "chuva1h":
+        return RAIN1
     if phen == "calor":
         return heat(code)
     if phen == "frio":

@@ -35,6 +35,17 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.3 (22/11/2026)
+  • Avisos: também a chuva forte em 1 hora (21 a 40 mm laranja, mais de
+    40 mm vermelho), no continente e na Madeira, até 2 dias. Como o
+    ensemble do ECMWF só dá a chuva de 3 em 3 horas, a probabilidade vem
+    dos 40 membros do ICON-EU-EPS do DWD (chuva hora a hora, células de
+    ~10 km), com o ICON-EU e o GFS como modelos de apoio. Os aguaceiros e
+    as trovoadas isoladas podem ser bem mais intensos num ponto do que os
+    modelos mostram: o serviço vê sobretudo a chuva forte organizada.
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.5.2 (22/11/2026)
   • Avisos: também a neve, com os critérios do IPMA por altitude
     (abaixo de 1000 m: 6 cm laranja, mais de 15 cm vermelho; de 1000 a
