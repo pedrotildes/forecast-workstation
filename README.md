@@ -380,8 +380,30 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   só quando muda o nível, as áreas ou os dias, cancelamento; os avisos laranja e vermelho do
   IPMA são reencaminhados. Das 23h às 8h chegam em silêncio, exceto os vermelhos. No Telegram,
   `/estado` lista os eventos em curso.
+- **Verificação** (`app/alerts/verify.py`): na manhã seguinte (07 UTC) cada dia é verificado,
+  área a área, para cada tipo de aviso do IPMA. Compara-se o que o serviço disse (alerta laranja
+  ou vermelho, vigilância, alerta cancelado ou nada, e a probabilidade de laranja da run das 00
+  UTC um e dois dias antes) com o **aviso do IPMA** para a mesma área e dia — a referência, porque
+  o serviço existe para antecipar esses avisos — e com o **observado**: as estações do IPMA (chuva
+  em 1 e 6 h, vento médio, temperatura horária) e os METAR dos aeroportos (rajadas, horas com
+  visibilidade abaixo de 1 km; arquivo do Iowa Environmental Mesonet). Os dados abertos do IPMA só
+  guardam as últimas 24 h de observações e os avisos em vigor, por isso o serviço arquiva os
+  avisos (todos os níveis, com a hora em que apareceram) a cada ciclo e as observações de hora a
+  hora, em `verif/` (400 dias). Não há observações abertas de rajadas fora dos aeroportos, de
+  ondas, neve, granizo ou do nevoeiro dos vales: aí conta só o aviso do IPMA. Cada área-dia é um
+  **acerto** (alerta e aviso laranja/vermelho), um **alarme falso** (alerta sem esse aviso) ou uma
+  **falha** (aviso sem alerta); nos acertos, o nível (igual, abaixo, acima) e a **antecedência**
+  face ao primeiro aviso laranja/vermelho no feed do IPMA. Quando um evento confirmado acaba (ou
+  é cancelado) segue uma mensagem de verificação, e os avisos laranja/vermelho que nenhum alerta
+  anunciou dão uma mensagem «não previsto». As pontuações acumulam (POD, FAR, antecedência,
+  fiabilidade e Brier da probabilidade um dia antes) para afinar os limiares quando houver casos
+  suficientes; `python -m app.alerts verificar` corre a verificação à mão. Primeiro caso
+  (chuva de 21/11/2026, verificado depois): 5 acertos (Viseu, Coimbra, Leiria, Aveiro, Vila Real;
+  nos três primeiros o IPMA chegou ao vermelho) e 8 falhas — seis estavam em vigilância (28–54 %),
+  Lisboa e Setúbal (laranja a partir das 15 h) não tinham sinal no ensemble.
 - **Separador «Avisos»** na app: estado do serviço, eventos (confirmados, em vigilância e
-  anteriores), tabela por área, figuras de cada run e mensagens enviadas.
+  anteriores), tabela por área, figuras de cada run, mensagens enviadas e a verificação (de cada
+  evento e acumulada).
 
 ```bash
 cd backend

@@ -4,12 +4,14 @@
     python -m app.alerts servico         # continuous service (what the login agent runs)
     python -m app.alerts agora [--sem-envio]   # one cycle now (and print what would be sent)
     python -m app.alerts estado          # events in progress
+    python -m app.alerts verificar       # verify the past days now (prints, sends nothing)
     python -m app.alerts teste           # test message to the phone
     python -m app.alerts instalar | remover    # login agent (macOS launchd)
 
 Every 5 minutes: is there a new 00/12Z ECMWF ENS run? -> analyse it, update the events and
-send what changed; new official IPMA orange/red warnings -> relay them. A second task
-answers /estado on Telegram.
+send what changed; new official IPMA orange/red warnings -> relay them. Every morning the
+previous day is verified against the IPMA warnings and the observations (verify.py), and a
+verification message follows each event that ended. A second task answers /estado on Telegram.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ import time
 from pathlib import Path
 
 from ..config import ALERTS_DIR
-from . import ens, events, figures, ipma, messages, telegram
+from . import ens, events, figures, ipma, messages, telegram, verify
 from .detect import RUNS_DIR, analyse
 
 H = dt.timedelta(hours=1)
@@ -112,6 +114,10 @@ async def ens_step(st: dict, cfg: dict, send: bool) -> None:
 async def ipma_step(st: dict, cfg: dict, send: bool) -> None:
     ws = await ipma.fetch()
     st["ipma"]["active"] = ws
+    try:
+        verify.archive_warnings(ws)               # every level, for the verification
+    except OSError as e:
+        log(f"verificação: arquivo dos avisos falhou ({e})")
     st["ipma"]["checked"] = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
     for grp in ipma.new_groups(st, ws, cfg.get("ipma_levels", ["orange", "red"])):
         text = messages.official_text(grp)
@@ -130,6 +136,21 @@ async def ipma_step(st: dict, cfg: dict, send: bool) -> None:
     if send and not telegram.configured():
         for grp in ipma.new_groups(st, ws, cfg.get("ipma_levels", ["orange", "red"])):
             ipma.mark_seen(st, grp)
+
+
+async def verify_step(st: dict, send: bool) -> None:
+    """Observations archive, the days due for verification, and their messages (silent)."""
+    texts = await verify.step(st, log=log)
+    events.save_state(st)
+    for txt in texts:
+        if not send or not telegram.configured():
+            log(f"[sem envio] verificação\n{txt}")
+            continue
+        try:
+            await telegram.send_text(txt, silent=True)
+            log("enviado: verificação")
+        except telegram.TelegramError as e:
+            log(f"verificação: envio falhou ({e})")
 
 
 async def catch_up(st: dict, send: bool) -> None:
@@ -172,6 +193,10 @@ async def cycle(send: bool = True) -> None:
     for n in events.tick(st):
         await notify(st, n, send)
     await catch_up(st, send)
+    try:
+        await verify_step(st, send)
+    except Exception as e:  # noqa: BLE001
+        log(f"verificação: erro {e.__class__.__name__}: {e}")
     st["heartbeat"] = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
     events.save_state(st)
 
@@ -319,6 +344,20 @@ def main(argv: list[str]) -> None:
         asyncio.run(service())
     elif cmd == "agora":
         asyncio.run(cycle(send="--sem-envio" not in argv))
+    elif cmd == "verificar":
+        import re
+
+        async def run_verify():
+            st = events.load_state()
+            for txt in await verify.step(st, log=print):
+                print(re.sub(r"<[^>]+>", "", txt), "\n")
+            events.save_state(st)
+            for typ, t in verify.summary()["types"].items():
+                n = t["acertos"] + t["alarmes_falsos"] + t["falhas"]
+                if n:
+                    print(f"{typ}: {t['acertos']} acertos, {t['alarmes_falsos']} alarmes falsos, "
+                          f"{t['falhas']} falhas (POD {t['pod']}, FAR {t['far']})")
+        asyncio.run(run_verify())
     elif cmd == "estado":
         import re
         print(re.sub(r"<[^>]+>", "", messages.status_text(events.load_state())))

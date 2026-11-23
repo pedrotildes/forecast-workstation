@@ -1057,6 +1057,15 @@ async def alerts_state():
         "phenomena": PHENOMENA, "config": al_events.load_config()})
 
 
+@app.get("/api/alerts/verification")
+async def alerts_verification():
+    """Verification of the alerts: cumulative scores and the records of the last 60 days."""
+    from .alerts import verify
+    days = verify.load_days()
+    return _clean({"summary": verify.summary(days), "days": days[-60:],
+                   "since": verify.START.isoformat()})
+
+
 @app.get("/api/alerts/{eid}/figs")
 async def alerts_figs(eid: str):
     from .alerts.figures import FIG_DIR

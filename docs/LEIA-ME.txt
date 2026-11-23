@@ -35,6 +35,18 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.6 (23/11/2026)
+  • Avisos: verificação depois dos eventos. Cada dia é verificado na
+    manhã seguinte, área a área: o que o serviço disse (alerta,
+    vigilância ou nada), o aviso do IPMA para a mesma área e dia e o que
+    as estações do IPMA e os aeroportos mediram. Quando um evento acaba
+    chega uma mensagem de verificação (acertos, alarmes falsos, falhas,
+    antecedência face ao IPMA), e os avisos laranja ou vermelho do IPMA
+    que o serviço não previu também são assinalados. O separador Avisos
+    mostra a verificação de cada evento e as pontuações acumuladas.
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.5.5 (23/11/2026)
   • Avisos: passam a cobrir todos os critérios do IPMA.
   • Nevoeiro persistente (laranja ≥ 72 h, vermelho ≥ 96 h), em todas as

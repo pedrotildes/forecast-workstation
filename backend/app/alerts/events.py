@@ -205,6 +205,8 @@ def update(st: dict, analysis: dict, prev_analysis: dict | None, cfg: dict,
             ev["level"] = level
             ev["history"] = [h for h in ev["history"] if h["run"] != runs_iso] + [{
                 "run": runs_iso, "level": level, "conf": conf,
+                "conf_days": {c: areas[c]["conf_days"] for c in conf},      # for the verification
+                "conf_lev": {c: areas[c]["status"] for c in conf},
                 "watch": [c for c, a in areas.items() if a["status"] == "vigilancia"],
                 "p": {c: [a["p_o"], a["p_r"]] for c, a in areas.items()}}]
             if ev["status"] == "confirmado":

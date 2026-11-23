@@ -729,7 +729,7 @@ async function showAlerts() {
     ${sv.running ? "" : `<div class="hint">Para o pôr a correr: <code>python -m app.alerts instalar</code> (em backend/).</div>`}`;
   const act = d.events.filter((e) => ["confirmado", "vigilancia"].includes(e.status));
   const old = d.events.filter((e) => !["confirmado", "vigilancia"].includes(e.status)).slice(-12).reverse();
-  if (!AL.sel || !d.events.find((e) => e.id === AL.sel)) AL.sel = (act[0] || old[0] || {}).id || null;
+  if (!AL.sel || (AL.sel !== "__verif__" && !d.events.find((e) => e.id === AL.sel))) AL.sel = (act[0] || old[0] || {}).id || null;
   const card = (e) => {
     const lv = alLevelOf(e);
     const top = Object.entries(e.areas || {}).slice(0, 3).map(([c, a]) => `${esc(d.areas[c] || c)} ${alPct(a.p_o)}`).join(", ");
@@ -751,15 +751,76 @@ async function showAlerts() {
       · ${esc(g.map((w) => d.areas[w.area] || w.area).join(", "))}<br>
       <small>${esc(g[0].start.replace("T", " ").slice(0, 16))} → ${esc(g[0].end.replace("T", " ").slice(11, 16))}</small></div>`).join("")
     : `<p class="hint">Nenhum aviso laranja ou vermelho.</p>`;
+  try { AL.verif = await api("/api/alerts/verification"); } catch (e) { AL.verif = null; }
+  const vs = AL.verif && AL.verif.summary;
+  const vrows = vs ? Object.entries(vs.types).filter(([, t]) => t.acertos + t.alarmes_falsos + t.falhas) : [];
+  $("#al-verif").innerHTML = vs && vs.days
+    ? `${vrows.length ? vrows.map(([k, t]) => `<div><b>${esc(k)}</b>: ${t.acertos} ✅ · ${t.alarmes_falsos} ⚠️ · ${t.falhas} ❌</div>`).join("")
+        : `<div class="hint">Nenhum aviso laranja ou vermelho nos dias verificados.</div>`}
+       <div class="sub">${vs.days} dia(s) verificado(s), ${alDay(vs.from)} a ${alDay(vs.to)}</div>
+       <button class="ev-card ${AL.sel === "__verif__" ? "on" : ""}" id="al-verif-open" style="margin-top:6px"><b>Ver a verificação</b></button>`
+    : `<p class="hint">O serviço verifica cada dia na manhã seguinte (avisos do IPMA e observações).</p>`;
+  const vo = $("#al-verif-open");
+  if (vo) vo.onclick = () => { AL.sel = "__verif__"; showAlerts(); };
   await renderAlertPanel();
   refreshAlertBadge();
   clearTimeout(AL.timer);
   if (S.tab === "alerts") AL.timer = setTimeout(showAlerts, 60000);
 }
 
+const AL_OUT = { acerto: "✅ acerto", alarme_falso: "⚠️ alarme falso", falha: "❌ falha" };
+const AL_LVL = { yellow: "amarelo", orange: "laranja", red: "vermelho" };
+
+function renderVerifPanel(box) {
+  const v = AL.verif;
+  const d = AL.data;
+  if (!v || !v.summary.days) {
+    box.innerHTML = `<h2>Verificação</h2><p class="sub">Ainda não há dias verificados.</p>`;
+    return;
+  }
+  const pc = (x) => (x == null ? "—" : `${Math.round(100 * x)}%`);
+  const all = Object.entries(v.summary.types);
+  const withCases = all.filter(([, t]) => t.acertos + t.alarmes_falsos + t.falhas);
+  const types = withCases.length ? withCases : all;
+  const rows = types.map(([k, t]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${t.acertos}</td><td class="num">${t.alarmes_falsos}</td>
+      <td class="num">${t.falhas}</td><td class="num">${pc(t.pod)}</td><td class="num">${pc(t.far)}</td>
+      <td class="num">${t.nivel.igual}/${t.nivel.abaixo}/${t.nivel.acima}</td>
+      <td class="num">${t.antecedencia_h == null ? "—" : (t.antecedencia_h > 0 ? "+" : "") + Math.round(t.antecedencia_h) + " h"}</td>
+      <td class="num">${t.brier.p1 == null ? "—" : t.brier.p1.toFixed(3)}</td></tr>`).join("");
+  const rel = types.filter(([, t]) => (t.fiabilidade.p1 || []).some((b) => b.obs)).map(([k, t]) =>
+    `<tr><td><b>${esc(k)}</b></td><td>${t.fiabilidade.p1.map((b) => `${b.p}: ${b.obs}/${b.n}`).join(" · ")}</td></tr>`).join("");
+  const days = v.days.slice().reverse().map((r) => {
+    const lines = [];
+    Object.entries(r.types).forEach(([k, t]) => Object.entries(t.rows).forEach(([c, x]) => {
+      if (!x.outcome && !(x.ipma === "orange" || x.ipma === "red")) return;
+      lines.push(`<tr><td>${alDay(r.day)}</td><td>${esc(k)}</td><td>${esc(d.areas[c] || c)}</td>
+        <td>${x.fc ? (x.fc === "vigilancia" ? "vigilância" : x.fc) + " " + alPct(x.fc_p) : "sem sinal"}</td>
+        <td>${x.ipma ? `<span class="al-tag ${x.ipma}">${AL_LVL[x.ipma]}</span>` : "—"}</td>
+        <td>${esc(x.obs || "")}</td><td>${AL_OUT[x.outcome] || ""}</td></tr>`);
+    }));
+    return lines.join("");
+  }).join("");
+  box.innerHTML = `<h2>Verificação dos avisos</h2>
+    <p class="sub">${v.summary.days} dia(s) verificado(s), ${alDay(v.summary.from)} a ${alDay(v.summary.to)}. Referência: o aviso laranja ou
+      vermelho do IPMA para a mesma área e dia. Acerto: o serviço deu alerta e o IPMA avisou; alarme falso: alerta sem aviso
+      laranja/vermelho; falha: aviso do IPMA sem alerta. Nível (igual/abaixo/acima): nos acertos, o nível do alerta face ao
+      do IPMA. Antecedência: horas entre o alerta e o primeiro aviso laranja/vermelho no feed do IPMA (mediana).
+      Brier: erro quadrático da probabilidade de laranja um dia antes (0 é perfeito).</p>
+    <table><thead><tr><th>Tipo</th><th>Acertos</th><th>Alarmes falsos</th><th>Falhas</th><th>POD</th><th>FAR</th>
+      <th>Nível</th><th>Antecedência</th><th>Brier</th></tr></thead><tbody>${rows}</tbody></table>
+    ${rel ? `<h3>Fiabilidade da probabilidade de laranja um dia antes</h3>
+      <p class="sub">Em cada classe: área-dias com aviso laranja/vermelho do IPMA / área-dias com essa probabilidade.
+        Com probabilidades bem calibradas, a fração acompanha a classe; serve para afinar os limiares quando houver casos.</p>
+      <table><tbody>${rel}</tbody></table>` : ""}
+    <h3>Dias verificados</h3>
+    ${days ? `<table><thead><tr><th>Dia</th><th>Tipo</th><th>Área</th><th>Serviço</th><th>IPMA</th><th>Observado</th><th></th></tr></thead>
+      <tbody>${days}</tbody></table>` : `<p class="hint">Nada a registar.</p>`}`;
+}
+
 async function renderAlertPanel() {
   const d = AL.data;
   const box = $("#al-panel");
+  if (AL.sel === "__verif__") { renderVerifPanel(box); return; }
   const e = d.events.find((x) => x.id === AL.sel);
   if (!e) {
     box.innerHTML = `<h2>Avisos</h2><p class="sub">Ainda não há eventos. O serviço analisa as runs das 00 e 12 UTC do
@@ -796,6 +857,7 @@ async function renderAlertPanel() {
     <h3>Figuras ${runSel}</h3>
     ${cur ? `<div class="al-figs">${cur.figs.map((f) => `<figure><img src="${f.url}" loading="lazy"><figcaption>${esc(f.caption)}</figcaption></figure>`).join("")}</div>`
       : `<p class="hint">As figuras são feitas quando o evento é confirmado.</p>`}
+    ${e.verif ? `<h3 style="margin-top:22px">Verificação</h3><div class="al-msg">${e.verif.text.replace(/<(?!\/?b>|\/?i>)[^>]+>/g, "")}</div>` : ""}
     ${msgs ? `<h3 style="margin-top:22px">Mensagens enviadas</h3>${msgs}` : ""}`;
   const rs = $("#al-run");
   if (rs) rs.onchange = (ev) => { AL.run = ev.target.value; renderAlertPanel(); };
