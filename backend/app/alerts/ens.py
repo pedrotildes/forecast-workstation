@@ -34,9 +34,13 @@ MEMBER_PARAMS = {
     "swh": ("swh",),                   # significant height of wind waves and swell (m)
     "mwd": ("mwd",),                   # mean wave direction (degrees, where waves come from)
     "t850": ("t",),                    # temperature at 850 hPa (snow: temperature aloft)
+    # thunderstorms: most-unstable CAPE (the 2024 archive has only "cape", computed the same
+    # way from the most unstable parcel below 350 hPa) and the wind at 925 and 500 hPa
+    "mucape": ("mucape", "cape"),
+    "u925": ("u",), "v925": ("v",), "u500": ("u",), "v500": ("v",),
 }
 # fields on pressure levels: name -> level (hPa); the others are single-level ("sfc")
-MEMBER_LEVEL = {"t850": 850}
+MEMBER_LEVEL = {"t850": 850, "u925": 925, "v925": 925, "u500": 500, "v500": 500}
 WAVE_NAMES = {"swh", "mwd"}
 # probability products of the "ep" file (24-h windows every 12 h)
 EP_PARAMS = {
@@ -158,9 +162,13 @@ async def members(run: dt.datetime, name: str, step: int) -> dict | None:
         except FieldUnavailable:
             return None
         lev = MEMBER_LEVEL.get(name)
-        todo = [e for e in entries if e.get("param") in params and e.get("type") == "pf"
-                and (e.get("levtype") == "sfc" if lev is None
-                     else e.get("levtype") == "pl" and str(e.get("levelist")) == str(lev))]
+        todo = []
+        for prm in params:                  # the first of the alternative params present
+            todo = [e for e in entries if e.get("param") == prm and e.get("type") == "pf"
+                    and (e.get("levtype") == "sfc" if lev is None
+                         else e.get("levtype") == "pl" and str(e.get("levelist")) == str(lev))]
+            if todo:
+                break
         if not todo:
             return None
         todo.sort(key=lambda e: int(e.get("number", 0)))

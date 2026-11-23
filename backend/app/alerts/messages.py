@@ -49,14 +49,15 @@ def pct(p: float) -> str:
 
 def unit(phen: str) -> str:
     return {"vento": "km/h", "chuva": "mm", "chuva1h": "mm", "calor": "°C", "frio": "°C", "mar": "m",
-            "neve": "cm"}[phen]
+            "neve": "cm", "trovoada": "m²/s²"}[phen]
 
 
 def value_what(phen: str) -> str:
     return {"vento": "rajada máxima", "chuva": "máximo de precipitação em 6 h",
             "chuva1h": "máximo de precipitação em 1 h",
             "calor": "temperatura máxima", "frio": "temperatura mínima",
-            "mar": "altura significativa das ondas", "neve": "neve acumulada em 24 h"}[phen]
+            "mar": "altura significativa das ondas", "neve": "neve acumulada em 24 h",
+            "trovoada": "índice de tempestade severa, CAPE × cisalhamento"}[phen]
 
 
 def criterion_text(phen: str, groups: set[str]) -> str:
@@ -68,7 +69,7 @@ def criterion_text(phen: str, groups: set[str]) -> str:
             parts.append("Açores: rajadas 101–130 km/h, vermelho > 130 km/h")
         return "; ".join(parts)
     if phen == "chuva":
-        return "41–60 mm em 6 h, vermelho > 60 mm (a chuva em 1 h é avaliada à parte; a trovoada não)"
+        return "41–60 mm em 6 h, vermelho > 60 mm (a chuva em 1 h e a trovoada são avaliadas à parte)"
     if phen == "chuva1h":
         return "21–40 mm em 1 h, vermelho > 40 mm (continente e Madeira; os Açores ficam fora do ICON-EU-EPS)"
     if phen == "calor":
@@ -86,6 +87,11 @@ def criterion_text(phen: str, groups: set[str]) -> str:
     if phen == "neve":
         return ("neve acumulada abaixo de 1000 m 6–15 cm (vermelho > 15), de 1000 a 1600 m 11–30 cm "
                 "(vermelho > 30), acima de 1600 m 26–50 cm (vermelho > 50); aqui, em 24 h")
+    if phen == "trovoada":
+        return ("condições favoráveis a fenómenos severos localizados — granizo ≥ 2 cm, rajadas ≥ 90 km/h, "
+                "20–40 mm em 1 h; vermelho: extremos. Aqui: √(2·CAPE) × cisalhamento 925–500 hPa "
+                f"≥ {C.STORM['laranja']:.0f} m²/s² (vermelho ≥ {C.STORM['vermelho']:.0f}) onde o membro "
+                f"dá precipitação e a CAPE passa de {C.STORM_CAPE:.0f} J/kg")
     return ""
 
 
@@ -216,6 +222,10 @@ def event_text(ev: dict, kind: str, official: list[dict], why: list[str] | None 
     if phen == "chuva1h":
         lines.append("<i>Chuva numa hora em células de ~10 km (ICON-EU-EPS): um aguaceiro forte ou uma trovoada "
                      "isolada pode dar muito mais num ponto do que a média da célula.</i>")
+    if phen == "trovoada":
+        lines.append("<i>Os modelos globais não preveem granizo nem rajadas de trovoada: o índice mede o ambiente "
+                     "(instabilidade × cisalhamento do vento) onde os membros dão precipitação. Diz onde as "
+                     "trovoadas podem ser severas, não onde cai cada uma.</i>")
     c0, a0 = conf[0] if conf else (None, None)
     lines += ["", "<b>Porquê esta certeza</b>"]
     if a0 is not None:

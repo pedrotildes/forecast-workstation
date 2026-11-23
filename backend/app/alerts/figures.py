@@ -1,5 +1,6 @@
 """Figures of an alert event (sent to Telegram and shown in the app's «Avisos» tab).
-(Rain in 1 h: the ensemble is the DWD ICON-EU-EPS, 40 members, instead of the ECMWF ENS.)
+(Rain in 1 h: the ensemble is the DWD ICON-EU-EPS, 40 members, instead of the ECMWF ENS.
+Thunderstorms: the value is the severe-storm index of storms.py, in m²/s².)
 
 1. probability map — ENS probability of reaching the orange criterion (peak of the
    event days), confirmed areas outlined, the probability of each area written on it;
@@ -53,11 +54,16 @@ SNOW_FILL = Fill([1, 2, 4, 6, 10, 15, 20, 30, 40, 50, 75, 100],
 PROB_FILL = Fill([10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
                  _interp(["#fff3b0", "#ffd166", "#f8961e", "#f3722c", "#e63946", "#9d0208",
                           "#6a040f", "#3c096c"], 9), extend="neither", transparent_under=True)
+STORM_FILL = Fill([200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1500, 2000, 2500],
+                  _interp(["#e8f4d9", "#bfe3a0", "#7fc97f", "#ffe680", "#ffbf47", "#ff8c1a",
+                           "#f05a28", "#d7191c", "#a50f50", "#7a0177", "#4a1486"], 12),
+                  extend="max", over="#1a0033", transparent_under=True)
 VAR_OF = {"vento": "gust", "chuva": "precip", "calor": "tmax_day", "frio": "tmin_day", "mar": "swh",
-          "neve": "precip", "chuva1h": "precip"}
+          "neve": "precip", "chuva1h": "precip", "trovoada": "mucape"}
 HOW = {"vento": "max", "chuva": "max", "calor": "max", "frio": "min", "mar": "max", "neve": "max",
-       "chuva1h": "max"}
-FILL_OF = {"mar": WAVE_FILL, "neve": SNOW_FILL}
+       "chuva1h": "max", "trovoada": "max"}
+FILL_OF = {"mar": WAVE_FILL, "neve": SNOW_FILL, "trovoada": STORM_FILL}
+STORM_WHAT = "índice de tempestade severa √(2·CAPE) × cisalhamento 925–500 hPa (m²/s²), onde há precipitação"
 SNOW_ALT = "em 24 h, à altitude representativa de cada distrito (1000 m fora de Portugal)"
 FOOT = "Dados: © ECMWF Open Data (CC BY 4.0), NOAA GFS, DWD ICON-EU · Critérios de aviso: IPMA"
 FOOT_SEA = "Dados: © ECMWF Open Data (CC BY 4.0, ondas: ensemble e IFS), NOAA GFS-Wave · Critérios de aviso: IPMA"
@@ -133,10 +139,10 @@ def area_grid(lats, lons) -> np.ndarray:
 def threshold_grid(phen: str, lats, lons, region_id: str) -> np.ndarray:
     """(2, ny, nx) orange/red thresholds for the probability map (NaN where not defined)."""
     ny, nx = len(lats), len(lons)
-    if phen in ("vento", "chuva", "mar", "neve", "chuva1h"):
+    if phen in ("vento", "chuva", "mar", "neve", "chuva1h", "trovoada"):
         az = region_id == "azores"
         t = {"vento": C.GUST_AZORES if az else C.GUST, "chuva": C.RAIN6, "chuva1h": C.RAIN1,
-             "mar": C.WAVES_AZORES if az else C.WAVES, "neve": C.snow(0.0)}[phen]
+             "mar": C.WAVES_AZORES if az else C.WAVES, "neve": C.snow(0.0), "trovoada": C.STORM}[phen]
         return np.stack([np.full((ny, nx), t["laranja"]), np.full((ny, nx), t["vermelho"])]).astype(np.float32)
     ag = area_grid(lats, lons)
     out = np.full((2, ny, nx), np.nan, np.float32)
@@ -198,7 +204,8 @@ def prob_map(ev: dict, z: dict, region_id: str) -> bytes:
             "frio": "Tmín ≤ limiar laranja do distrito",
             "mar": f"ondas (Hs) ≥ {(C.WAVES_AZORES if region_id == 'azores' else C.WAVES)['laranja']:.0f} m",
             "neve": "neve ≥ limiar laranja (6, 11 ou 26 cm em 24 h, conforme a altitude) "
-                    "numa das cotas do distrito"}[phen]
+                    "numa das cotas do distrito",
+            "trovoada": f"índice de tempestade severa ≥ {C.STORM['laranja']:.0f} m²/s² com precipitação"}[phen]
     job = {"region": region_id, "lats": lats, "lons": lons, "layers": [
         {"type": "fill", "var": "t2m", "data": p, "fill_style": PROB_FILL,
          "label": f"Probabilidade (%) de {what} — máximo nos dias do evento"},
@@ -230,12 +237,13 @@ def high_map(ev: dict, z: dict, region_id: str) -> bytes:
             "chuva1h": "maior precipitação em 1 h no dia (mm)",
             "calor": "temperatura máxima (°C)", "frio": "temperatura mínima (°C)",
             "mar": "altura significativa das ondas (m)",
-            "neve": "neve acumulada (cm) " + SNOW_ALT}[phen]
+            "neve": "neve acumulada (cm) " + SNOW_ALT, "trovoada": STORM_WHAT}[phen]
     layers = [{"type": "fill", "var": var, "data": arr,
                "label": f"Percentil {q} dos {n_members(z, phen)} membros: {what}",
                **({"fill_style": FILL_OF[phen]} if phen in FILL_OF else {})}]
     if phen not in ("mar", "neve"):         # city values: the wave grids have nothing on land
-        layers.append({"type": "values", "var": var, "data": arr, "fmt": "%.0f"})
+        layers.append({"type": "values", "var": var, "fmt": "%.0f",
+                       "data": np.where(arr > 0, arr, np.nan) if phen == "trovoada" else arr})
     layers.append({"type": "areas", "geoms": geoms})
     if phen == "mar":
         layers.append({"type": "labels", "points": pts, "size": 8.0})
@@ -252,7 +260,7 @@ def high_map(ev: dict, z: dict, region_id: str) -> bytes:
         "header": {"left1": ens_head(ev, z),
                    "left2": f"Valor alto provável: {'só 1 em cada 10 membros abaixo' if phen == 'frio' else 'só 1 em cada 10 membros acima'} · "
                             f"{fmt_day(dt.date.fromisoformat(peak), True)}",
-                   "layers": f"Percentil {q} da {what} em cada ponto"
+                   "layers": f"Percentil {q} {'do' if phen == 'trovoada' else 'da'} {what} em cada ponto"
                              + (" · probabilidade de laranja em cada área" if phen == "mar" else
                                 " · nos distritos: percentil 90 na cota decisiva" if phen == "neve" else
                                 " · valores nas cidades (abaixo de 21 mm, só as horas analisadas)"
@@ -334,15 +342,15 @@ def boxes(ev: dict, z: dict, det: dict) -> bytes:
                  f"{fmt_run(src_run(ev) if phen == 'chuva1h' else ev['last_run'])}",
                  x=0.01, ha="left", fontsize=12.5, fontweight="bold", color="#0d1b2a")
     fig.text(0.01, 0.005, "Caixas: 25–75 % dos membros, bigodes 10–90 %, pontos: membros extremos · "
-             "tracejado laranja/vermelho: limiares IPMA · losangos: modelos determinísticos · "
-             "fundo: dias do evento", fontsize=7.8, color="#555")
+             f"tracejado laranja/vermelho: {'limiares do índice' if phen == 'trovoada' else 'limiares IPMA'} · "
+             "losangos: modelos determinísticos · fundo: dias do evento", fontsize=7.8, color="#555")
     fig.tight_layout(rect=(0, 0.02, 1, 0.97))
     return _fig_png(fig)
 
 
 def plume(ev: dict, z: dict) -> bytes | None:
     phen = ev["phen"]
-    if phen not in ("vento", "chuva", "mar", "neve", "chuva1h"):
+    if phen not in ("vento", "chuva", "mar", "neve", "chuva1h", "trovoada"):
         return None
     sl = area_slices(phen)
     code = _top_areas(ev, 1)[0]
@@ -381,14 +389,16 @@ def plume(ev: dict, z: dict) -> bytes | None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %Hh"))
     ax.grid(alpha=0.3)
     ax.set_ylabel(f"{unit(phen)}" + (" em 6 h" if phen == "chuva" else " em 1 h" if phen == "chuva1h" else
-                                     " nas 24 h anteriores" if phen == "neve" else ""))
-    if phen in ("mar", "neve", "chuva1h"):
+                                     " nas 24 h anteriores" if phen == "neve" else
+                                     " (0 onde o membro não chove)" if phen == "trovoada" else ""))
+    if phen in ("mar", "neve", "chuva1h", "trovoada"):
         ax.set_ylim(bottom=0)
     ax.legend(fontsize=8.5, loc="upper left")
     what = {"vento": "rajada máxima (3 h)", "chuva": "precipitação nas 6 h anteriores",
             "chuva1h": "precipitação em cada hora",
             "mar": "altura significativa das ondas",
-            "neve": f"neve nas 24 h anteriores {alt_text(ev['areas'][code].get('z', 1000))}"}[phen]
+            "neve": f"neve nas 24 h anteriores {alt_text(ev['areas'][code].get('z', 1000))}",
+            "trovoada": "índice de tempestade severa, de 3 em 3 h"}[phen]
     ax.set_title(f"{by_code()[code].name}: {what}, os {v.shape[1]} membros · run "
                  f"{fmt_run(src_run(ev) if phen == 'chuva1h' else ev['last_run'])}",
                  loc="left", fontsize=11.5, fontweight="bold")
@@ -491,16 +501,17 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
     r = REGIONS[region_id]
     from . import waves
     from . import rain1h
+    from . import storms
     mids = (("ifs_wave", "gfs_wave") if phen == "mar" else rain1h.DET if phen == "chuva1h"
-            else ("ecmwf", "aifs", "gfs", "icon_eu"))
+            else storms.DET if phen == "trovoada" else ("ecmwf", "aifs", "gfs", "icon_eu"))
     for mid in mids:
-        if phen == "chuva1h":
+        if phen in ("chuva1h", "trovoada"):
             m = MODELS[mid]
             mname = m.name
             if not m.covers_box(*r.extent):
                 continue
             try:
-                g = await rain1h.det_grid(mid, dt.date.fromisoformat(day))
+                g = await (rain1h if phen == "chuva1h" else storms).det_grid(mid, dt.date.fromisoformat(day))
             except Exception:  # noqa: BLE001
                 g = None
         elif phen == "neve":
@@ -533,8 +544,9 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
         lats, lons, arr, run = g
         layers = [{"type": "fill", "var": var, "data": arr, "label": f"{unit(phen)}",
                    **({"fill_style": FILL_OF[phen]} if phen in FILL_OF else {})}]
-        if phen not in ("mar", "neve"):
-            layers.append({"type": "values", "var": var, "data": arr, "fmt": "%.0f"})
+        if phen not in ("mar", "neve"):      # thunderstorms: no "0" where there is no storm
+            layers.append({"type": "values", "var": var, "fmt": "%.0f",
+                           "data": np.where(arr > 0, arr, np.nan) if phen == "trovoada" else arr})
         layers.append({"type": "areas", "geoms": geoms})
         job = {"region": region_id, "lats": lats, "lons": lons, "layers": layers,
             "header": {"left1": f"{mname} · run {fmt_run(run.isoformat())}",
@@ -558,7 +570,8 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
     what = {"vento": "rajada máxima do dia", "chuva": "maior precipitação em 6 h",
             "chuva1h": "maior precipitação em 1 h", "calor": "temperatura máxima", "frio": "temperatura mínima",
             "mar": "altura significativa máxima das ondas",
-            "neve": "neve acumulada " + SNOW_ALT}[phen]
+            "neve": "neve acumulada " + SNOW_ALT,
+            "trovoada": "índice de tempestade severa (ICON-EU: CAPE da camada de mistura)"}[phen]
     fig.suptitle(f"Modelos determinísticos: {what} ({unit(phen)})", x=0.01, ha="left", fontsize=13,
                  fontweight="bold", color="#0d1b2a")
     fig.subplots_adjust(left=0.005, right=0.995, top=0.95, bottom=0.005, wspace=0.01, hspace=0.01)
@@ -572,7 +585,7 @@ async def synoptic(ev: dict, z: dict) -> bytes | None:
     run = await m.best_run()
     steps = await m.list_steps(run)
     day = dt.date.fromisoformat(_peak_day(ev))
-    if phen in ("vento", "chuva", "mar", "chuva1h"):
+    if phen in ("vento", "chuva", "mar", "chuva1h", "trovoada"):
         # time of the highest median in the most likely area
         sl = area_slices(phen)
         code = _top_areas(ev, 1)[0]
@@ -585,6 +598,9 @@ async def synoptic(ev: dict, z: dict) -> bytes | None:
             enr = dt.datetime.fromisoformat(ev["last_run"])
             t_peak = enr + int(z[f"steps_{day.isoformat()}"][int(np.nanargmax(med))]) * H
         preset, region = "sfc_precip", "nea"
+        if phen == "trovoada":              # CAPE, shear and 10 m wind at the time of the peak
+            grp = by_code()[code].group
+            preset, region = "cape", ("iberia" if grp == "continente" else "nea")
     elif phen == "neve":
         # middle of the 24 h with the most snow (median) in the most likely area; 850 hPa temperature
         from .snow import snow_points

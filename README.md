@@ -257,7 +257,8 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   limiares vermelhos de cada distrito, > 40 mm em 1 h; agitação marítima (altura significativa das ondas
   5 m, vermelho > 7 m; Açores 7 e 9 m; costa sul do Algarve com ondulação de sueste 3 e 5 m);
   neve acumulada por faixa de altitude (abaixo de 1000 m 6 cm, vermelho > 15; 1000–1600 m 11 e
-  30 cm; acima de 1600 m 26 e 50 cm), em 24 h. Ficam de fora a trovoada e o nevoeiro.
+  30 cm; acima de 1600 m 26 e 50 cm), em 24 h; trovoada (índice de tempestade severa, abaixo).
+  Fica de fora o nevoeiro.
 - **Chuva em 1 h** (`app/alerts/rain1h.py`): o ensemble do ECMWF só publica a precipitação de
   3 em 3 h, por isso aqui o ensemble é o **ICON-EU-EPS do DWD** (40 membros, grelha icosaédrica
   com células a ~10 km, precipitação horária até +48 h, runs de 6 em 6 h; cada ficheiro traz os
@@ -272,6 +273,36 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   por isso o serviço vê sobretudo a chuva forte organizada (linhas de instabilidade, frentes
   com convecção, depressões isoladas). Na tempestade Charles (11/11/2026, 12–13 UTC) o ICON-EU
   deu 22 mm/h e o GFS 17 mm/h no distrito de Lisboa, a muito curto prazo.
+- **Trovoada** (`app/alerts/storms.py`): desde agosto de 2026 o IPMA define o aviso pelos
+  fenómenos esperados — laranja: condições para fenómenos *severos* localizados (granizo ≥ 2 cm,
+  rajadas ≥ 90 km/h, 20–40 mm em 1 h); vermelho: *extremos* (granizo grande, rajadas muito
+  destrutivas, ≥ 40 mm em 1 h). Um modelo global a 9 km não faz granizo nem rajadas de
+  trovoada, por isso o aviso lê-se no **ambiente** de cada membro do ensemble do ECMWF, como fazem
+  os previsores: **√(2·MUCAPE) × cisalhamento do vento entre 925 e 500 hPa** (WMAXSHEAR, m²/s²),
+  o parâmetro que melhor separa as trovoadas comuns das severas e estas das extremamente severas
+  nas sondagens europeias (Taszarek et al. 2017, 2020; é o «CAPE-shear» do ECMWF sem o fator √2).
+  Só conta onde o próprio membro dá precipitação (≥ 1 mm nas 6 h em volta) e com MUCAPE ≥ 500 J/kg:
+  CAPE que não é libertada não faz trovoadas, e nas frentes de inverno o cisalhamento sozinho
+  (30–40 m/s com 200–400 J/kg) chegaria ao limiar. O valor de um dia é o máximo nas 8 horas
+  sinópticas. Limiares: laranja ≥ 900, vermelho ≥ 2000 m²/s² (nas sondagens, ~500–700 nas
+  severas e ~1000 nas extremamente severas; aqui é o máximo de um distrito num dia, daí valores
+  mais altos). Os dias são triados com o mesmo índice no IFS (≥ 60 % do limiar, ± 1 dia); o vento
+  a 925 e 500 hPa (o grosso do download) só é descarregado para os membros que têm chuva e CAPE
+  acima do mínimo nos pontos dos distritos a essa hora: poucos num dia de inverno, todos num dia
+  de trovoadas generalizadas (~0,5 GB). Modelos de apoio: IFS, GFS e ICON-EU (este com a CAPE da camada de mistura), a 40 % do
+  limiar. Até 2 dias. Calibração com o arquivo do ECMWF na AWS (run das 00 UTC do dia; o IPMA
+  avaliava antes a frequência das descargas, por isso os casos até 2025 não medem a mesma coisa):
+  10–11/06/2025, laranja do IPMA em 7 distritos do Norte e Centro — 100 % nesses 7, mas também
+  70–100 % em Bragança, Guarda, Castelo Branco, Leiria, Santarém e Portalegre; 29/07/2024, laranja
+  em 13 distritos — no máximo 60 % (Santarém); 7–8/06/2024, laranja em 8 — ≤ 20 %; 3 e
+  5/10/2026, laranja subido pelo IPMA no próprio dia (Setúbal e Évora; Guarda, Castelo Branco e
+  Santarém) — ≤ 10 % nesses distritos e ≤ 52 % fora deles; 5/09/2026, amarelo em Aveiro (houve
+  granizo > 2 cm e um *downburst*) — ≤ 12 %; frentes de 11 e 21/11/2026 — ≤ 14 %; frente fria de
+  5/11/2025 (amarelo de trovoada com «fenómenos extremos de vento», laranja de chuva) — 68–100 %
+  em Faro, Beja, Setúbal, Évora, Santarém, Castelo Branco e Guarda, que dariam alerta. O serviço
+  vê portanto os dias de tempestades severas **generalizadas**; as trovoadas isoladas e os avisos
+  subidos no próprio dia escapam-lhe, e uma frente fria muito instável pode dar um alerta onde o
+  IPMA fica no amarelo.
 - **Neve** (`app/alerts/snow.py`): a grelha de 0,25° alisa as serras (a Serra da Estrela fica
   com 865 m no IFS), por isso a neve não é lida do manto de neve dos modelos mas **estimada à
   altitude de cada faixa** a partir da precipitação e da temperatura de cada ponto: temperatura
@@ -293,11 +324,13 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   de bytes e recortados a Portugal; uma área chega ao nível num membro quando algum dos seus
   pontos chega. Para poupar downloads, os membros só são lidos onde os produtos de
   probabilidade do ECMWF (`ep`: rajadas ≥ 90 km/h, chuva ≥ 25 mm/24 h, ondas acima de 2, 4 e
-  6 m), a Tmáx/Tmín do IFS ou a neve estimada pelo IFS (≥ 30 % do limiar) mostram alguma hipótese.
+  6 m), a Tmáx/Tmín do IFS, a neve estimada pelo IFS (≥ 30 % do limiar) ou o índice de trovoada
+  do IFS (≥ 60 % do limiar) mostram alguma hipótese.
 - **Certeza** (`app/alerts/events.py`, ajustável em `config.json`): ≥ 60 % dos membros
   (vermelho ≥ 50 %), ≥ 40 % já na run anterior, metade dos modelos determinísticos (IFS, AIFS,
   GFS, ICON-EU; no mar, IFS e GFS-Wave; na neve, a 40 % do limiar; na chuva em 1 h, ICON-EU e
-  GFS) perto do limiar e até 4 dias de antecedência (calor e frio 6, chuva em 1 h 2). Abaixo disso o
+  GFS; na trovoada, IFS, GFS e ICON-EU a 40 % do limiar) perto do limiar e até 4 dias de
+  antecedência (calor e frio 6, chuva em 1 h e trovoada 2). Abaixo disso o
   evento fica «em vigilância», só na app. Um evento confirmado mantém-se enquanto a
   probabilidade não cair abaixo de 25 % (não há alertas e cancelamentos alternados).
 - **Mensagens**: alerta (texto + 7 figuras: probabilidade, valor alto provável, membros por dia,

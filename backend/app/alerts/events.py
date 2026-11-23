@@ -14,10 +14,11 @@ Certainty rule for an area-day at level L (orange or red):
 1. ENS probability ≥ ``p_confirm[L]`` in the current run;
 2. ≥ ``p_previous[L]`` in the previous ENS run (12 h earlier): the signal is consistent;
 3. at least ``det_support`` of the deterministic models available (IFS, AIFS, GFS,
-   ICON-EU; for rain in 1 h only ICON-EU and GFS, the ones with hourly rain) come within a
-   margin of the threshold;
+   ICON-EU; for rain in 1 h only ICON-EU and GFS, the ones with hourly rain; for
+   thunderstorms IFS, GFS and ICON-EU, the ones with CAPE) come within a margin of the threshold;
 4. the day is within ``lead_days`` (wind, rain, sea and snow 4 days, heat and cold 6, rain
-   in 1 h 2: the hourly ensemble, ICON-EU-EPS, reaches +48 h).
+   in 1 h 2: the hourly ensemble, ICON-EU-EPS, reaches +48 h; thunderstorms 2, the
+   ensemble has little skill for storms beyond that).
 For rain in 1 h the ensemble is the DWD ICON-EU-EPS (40 members) instead of the ECMWF ENS;
 it is analysed with each ECMWF run, so "the previous run" is the analysis 12 h earlier.
 Once confirmed, an area keeps its level while its probability stays ≥ ``p_hold`` (so a
@@ -41,7 +42,8 @@ DEFAULTS = {
     "p_hold": {"laranja": 0.25, "vermelho": 0.25},
     "p_watch": 0.2,
     "det_support": 0.5,
-    "lead_days": {"vento": 4, "chuva": 4, "calor": 6, "frio": 6, "mar": 4, "neve": 4, "chuva1h": 2},
+    "lead_days": {"vento": 4, "chuva": 4, "calor": 6, "frio": 6, "mar": 4, "neve": 4, "chuva1h": 2,
+                  "trovoada": 2},
     "quiet_hours": [23, 8],                 # Lisbon time: alerts arrive silently (red ones ring)
     "ipma_levels": ["orange", "red"],       # official IPMA warnings that are relayed
 }

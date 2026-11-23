@@ -7,9 +7,10 @@ https://www.ipma.pt/opencms/pt/enciclopedia/otempo/sam/index.html?page=criterios
 IPMA writes integer ranges for observed values ("91 a 130 km/h"); model values are
 continuous, so a range "a–b" becomes ≥ a − 0.5 and "> b" becomes ≥ b + 0.5.
 
-Not used (the models cannot give them with confidence, or the data are missing):
-thunderstorms, fog and the Azores mean-wind criterion. Rain in 1 h comes from an hourly
-ensemble that covers the mainland and Madeira only (rain1h.py). Snow is evaluated on the
+Not used (the models cannot give them with confidence, or the data are missing): fog and
+the Azores mean-wind criterion. Rain in 1 h comes from an hourly ensemble that covers the
+mainland and Madeira only (rain1h.py). Thunderstorms are given by IPMA as expected phenomena,
+not numbers: they are read from a severe-storm index of the ENS members (storms.py). Snow is evaluated on the
 mainland and in the mountains of Madeira (not in the Azores nor on the Madeira coasts).
 Heat and cold need ≥ 48 h: here, two consecutive days.
 """
@@ -26,10 +27,13 @@ PHENOMENA = {
     "frio": {"name": "Tempo frio", "unit": "°C", "what": "temperatura mínima", "icon": "🥶"},
     "mar": {"name": "Agitação marítima", "unit": "m", "what": "altura significativa das ondas", "icon": "🌊"},
     "neve": {"name": "Neve", "unit": "cm", "what": "neve acumulada em 24 h", "icon": "❄️"},
+    "trovoada": {"name": "Trovoada", "unit": "m²/s²", "what": "índice de tempestade severa",
+                 "icon": "⛈️"},
 }
 # IPMA "awarenessTypeName" of each phenomenon (official warnings JSON)
 IPMA_TYPE = {"vento": "Vento", "chuva": "Precipitação", "chuva1h": "Precipitação", "calor": "Tempo Quente",
-             "frio": "Tempo Frio", "mar": "Agitação Marítima", "neve": "Neve"}
+             "frio": "Tempo Frio", "mar": "Agitação Marítima", "neve": "Neve",
+             "trovoada": "Trovoada"}
 
 # ---------------------------------------------------------------- wind (max gust, km/h)
 GUST = {"laranja": 90.5, "vermelho": 130.5}
@@ -42,6 +46,17 @@ HIGHLAND_M = 700.0
 # ---------------------------------------------------------------- rain (mm in 6 h / in 1 h)
 RAIN6 = {"laranja": 40.5, "vermelho": 60.5}             # same on the mainland and the islands
 RAIN1 = {"laranja": 20.5, "vermelho": 40.5}             # 21–40 mm in 1 h, red > 40 (all regions)
+
+# ---------------------------------------------------------------- thunderstorms (index, m²/s²)
+# IPMA gives phenomena, not numbers (orange: severe — hail ≥ 2 cm, gusts ≥ 90 km/h,
+# 20–40 mm in 1 h; red: extreme — large hail, very destructive gusts, ≥ 40 mm in 1 h). Read
+# here as WMAXSHEAR = √(2·MUCAPE) × shear 925–500 hPa of the members where they precipitate
+# and MUCAPE ≥ STORM_CAPE (storms.py). In European soundings severe storms sit around
+# 500–700 and extremely severe ones around 1000 (Taszarek et al. 2017); the value of a
+# district-day is the maximum over its points and over 8 times of day, hence the higher
+# values, set on nine past cases (README).
+STORM = {"laranja": 900.0, "vermelho": 2000.0}
+STORM_CAPE = 500.0                                       # J/kg
 
 # ---------------------------------------------------------------- waves (Hs, m)
 WAVES = {"laranja": 5.0, "vermelho": 7.0}
@@ -119,6 +134,8 @@ def thresholds(phen: str, code: str, group: str) -> dict:
         return waves(group)
     if phen == "neve":
         return snow(0.0)
+    if phen == "trovoada":
+        return STORM
     raise KeyError(phen)
 
 
@@ -132,5 +149,7 @@ def fmt_threshold(phen: str, v: float) -> str:
         return f"{v:.0f} m"
     if phen == "neve":
         return f"{v + 0.5:.0f} cm"
+    if phen == "trovoada":
+        return f"{v:.0f} m²/s²"
     unit = PHENOMENA[phen]["unit"]
     return f"{v + 0.5:.0f} {unit}"

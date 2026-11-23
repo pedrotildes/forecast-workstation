@@ -14,6 +14,8 @@ for the area-days the ensemble flags.
 
 Rain in 1 h is the exception: the ECMWF ENS has no hourly precipitation, so it comes from
 the 40 members of the DWD ICON-EU-EPS (rain1h.py), analysed together with each ECMWF run.
+Thunderstorms are read from a severe-storm index (CAPE × wind shear) of the ENS members
+where they precipitate (storms.py); the days are screened with the same index from the IFS.
 """
 from __future__ import annotations
 
@@ -35,18 +37,22 @@ RUNS_DIR = ALERTS_DIR / "runs"
 DOMAIN = Domain(BOX[0], BOX[1], BOX[2], BOX[3])
 
 HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5, "neve": 5,
-           "chuva1h": 2}        # days analysed after the run (1-h rain: hourly ICON-EU-EPS to +48 h)
+           "chuva1h": 2,        # days analysed after the run (1-h rain: hourly ICON-EU-EPS to +48 h)
+           "trovoada": 3}       # thunderstorms: little skill beyond two or three days
 SCREEN = 5.0            # % — ep probability below which member fields are not fetched
 TEMP_MARGIN = 4.0       # °C — IFS within this of the orange threshold -> fetch members
 WATCH_P = 0.2           # area-day probability (orange) that puts it "em vigilância"
 DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0, "mar": 1.0,
               "neve": 0.4,      # snow: a fraction of the threshold (6, 11 or 26 cm by altitude)
-              "chuva1h": 8.0}
+              "chuva1h": 8.0,
+              "trovoada": 0.4}  # thunderstorms: a fraction of the threshold (index 900 / 2000)
 DET_MODELS = {"vento": ("ecmwf", "gfs", "icon_eu"),
               "chuva": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "calor": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "frio": ("ecmwf", "aifs", "gfs", "icon_eu")}
-_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1, "neve": 1, "chuva1h": 1}
+_HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1, "neve": 1, "chuva1h": 1,
+              "trovoada": 1}
+_REL_MARGIN = {"neve", "trovoada"}      # DET_MARGIN is a fraction of the threshold
 
 
 # ---------------------------------------------------------------- helpers
@@ -360,7 +366,7 @@ def _summary(phen, d, pts, lev_pts, thr_pts, det, codes_by_area) -> dict:
                 continue
             mv = dd["days"][d][sl]
             ml = levels(mv, thr_pts[:, sl], phen)
-            m = DET_MARGIN[phen] * (thr_pts[:, sl] if phen == "neve" else 1.0)
+            m = DET_MARGIN[phen] * (thr_pts[:, sl] if phen in _REL_MARGIN else 1.0)
             m0, m1 = (m[0], m[1]) if np.ndim(m) else (m, m)
             if _HIGH_SIGN[phen] > 0:
                 near, near_r = mv >= thr_pts[0, sl] - m0, mv >= thr_pts[1, sl] - m1
@@ -464,6 +470,16 @@ async def analyse(run: dt.datetime, log=print) -> dict:
         log(f"  triagem da neve falhou: {e}")
         out["failed"].append("neve")
 
+    # thunderstorms: the same severe-storm index from the IFS
+    storm_days = []
+    try:
+        from . import storms
+        storm_days = await storms.screen(run, [d0 + dt.timedelta(days=i) for i in range(HORIZON["trovoada"])],
+                                         out, log)
+    except Exception as e:  # noqa: BLE001
+        log(f"  triagem da trovoada falhou: {e}")
+        out["failed"].append("trovoada")
+
     # ---- members (a phenomenon that fails is marked, so its events are not cancelled)
     from . import rain1h
     ens_data = {}
@@ -473,6 +489,7 @@ async def analyse(run: dt.datetime, log=print) -> dict:
             ("frio", temp_days["frio"], lambda: _ens_temp(run, temp_days["frio"], "tmin", log)),
             ("mar", sea_days, lambda: waves.ens_daily(run, sea_days, log)),
             ("neve", snow_days, lambda: snow.ens_daily(run, snow_days, log)),
+            ("trovoada", storm_days, lambda: storms.ens_daily(run, storm_days, log)),
             # 1-h rain: hourly ICON-EU-EPS, which screens its own days (exactly, see rain1h.py)
             ("chuva1h", [run], lambda: rain1h.ens_daily(run, out, log))]
     if "calor" not in out["screen"]:        # the temperature screening (IFS) failed
@@ -530,6 +547,9 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
     elif phen == "chuva1h":
         from . import rain1h
         det = await rain1h.deterministic(flag_days, log) if flag_days else {}
+    elif phen == "trovoada":
+        from . import storms
+        det = await storms.deterministic(flag_days, log) if flag_days else {}
     else:
         det = await deterministic(phen, flag_days, log) if flag_days else {}
     sig = {}

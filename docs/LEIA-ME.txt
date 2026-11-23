@@ -35,6 +35,22 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.4 (23/11/2026)
+  • Avisos: também a trovoada, com os critérios do IPMA revistos em
+    agosto de 2026 (laranja: fenómenos severos localizados, como granizo
+    de 2 cm ou mais, rajadas de 90 km/h ou 20 a 40 mm numa hora;
+    vermelho: fenómenos extremos), no continente, Madeira e Açores, até
+    2 dias. Os modelos globais não preveem o granizo nem as rajadas de
+    cada trovoada, por isso o serviço avalia o ambiente: em cada membro
+    do ensemble do ECMWF, um índice de tempestade severa (CAPE ×
+    cisalhamento do vento entre os 925 e os 500 hPa), contado só onde o
+    membro chove e a CAPE passa de 500 J/kg. Limiares: 900 m²/s²
+    laranja, 2000 vermelho. Modelos de apoio: IFS, GFS e ICON-EU. Vê os
+    dias de trovoada severa espalhada; as trovoadas isoladas e os
+    agravamentos decididos no próprio dia escapam-lhe.
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.5.3 (22/11/2026)
   • Avisos: também a chuva forte em 1 hora (21 a 40 mm laranja, mais de
     40 mm vermelho), no continente e na Madeira, até 2 dias. Como o
