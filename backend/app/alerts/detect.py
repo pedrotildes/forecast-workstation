@@ -38,20 +38,22 @@ DOMAIN = Domain(BOX[0], BOX[1], BOX[2], BOX[3])
 
 HORIZON = {"vento": 5, "chuva": 5, "calor": 7, "frio": 7, "mar": 5, "neve": 5,
            "chuva1h": 2,        # days analysed after the run (1-h rain: hourly ICON-EU-EPS to +48 h)
-           "trovoada": 3}       # thunderstorms: little skill beyond two or three days
+           "trovoada": 3,       # thunderstorms: little skill beyond two or three days
+           "nevoeiro": 5}       # fog: 15 UTC fields, 3-hourly only up to +144 h
 SCREEN = 5.0            # % — ep probability below which member fields are not fetched
 TEMP_MARGIN = 4.0       # °C — IFS within this of the orange threshold -> fetch members
 WATCH_P = 0.2           # area-day probability (orange) that puts it "em vigilância"
 DET_MARGIN = {"vento": 10.0, "chuva": 10.0, "calor": 1.0, "frio": 1.0, "mar": 1.0,
               "neve": 0.4,      # snow: a fraction of the threshold (6, 11 or 26 cm by altitude)
               "chuva1h": 8.0,
-              "trovoada": 0.4}  # thunderstorms: a fraction of the threshold (index 900 / 2000)
+              "trovoada": 0.4,  # thunderstorms: a fraction of the threshold (index 900 / 2000)
+              "nevoeiro": 24.0}  # fog: one day short of the duration
 DET_MODELS = {"vento": ("ecmwf", "gfs", "icon_eu"),
               "chuva": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "calor": ("ecmwf", "aifs", "gfs", "icon_eu"),
               "frio": ("ecmwf", "aifs", "gfs", "icon_eu")}
 _HIGH_SIGN = {"vento": 1, "chuva": 1, "calor": 1, "frio": -1, "mar": 1, "neve": 1, "chuva1h": 1,
-              "trovoada": 1}
+              "trovoada": 1, "nevoeiro": 1}
 _REL_MARGIN = {"neve", "trovoada"}      # DET_MARGIN is a fraction of the threshold
 
 
@@ -102,6 +104,9 @@ def pointset(phen: str) -> PointSet:
     if phen == "chuva1h":
         from .rain1h import rain_points
         return rain_points()
+    if phen == "nevoeiro":
+        from .fog import fog_points
+        return fog_points()
     return land_points()
 
 
@@ -115,6 +120,9 @@ def point_thresholds(phen: str, highland: np.ndarray) -> np.ndarray:
         return thresholds()
     if phen == "chuva1h":
         from .rain1h import thresholds
+        return thresholds()
+    if phen == "nevoeiro":
+        from .fog import thresholds
         return thresholds()
     codes, groups = point_meta()
     out = np.zeros((2, len(codes)), np.float32)
@@ -190,6 +198,11 @@ async def _ens_wind(run, days, log) -> dict:
                   "grid": np.nanmax(np.stack([a["values"] for a in arrs]), 0),
                   "steps": [s for s in _steps_in(run, d) if s in got],
                   "lats": arrs[0]["lats"], "lons": arrs[0]["lons"]}
+    try:                                    # Azores: the mean-wind criterion too
+        from . import meanwind
+        await meanwind.add_mean(run, out, got, log)
+    except Exception as e:  # noqa: BLE001 — the gusts still decide
+        log(f"  vento médio (Açores) falhou: {e}")
     return out
 
 
@@ -480,6 +493,16 @@ async def analyse(run: dt.datetime, log=print) -> dict:
         log(f"  triagem da trovoada falhou: {e}")
         out["failed"].append("trovoada")
 
+    # fog: consecutive fog days in the IFS (the past days included)
+    fog_days = []
+    try:
+        from . import fog
+        fog_days = await fog.screen(run, [d0 + dt.timedelta(days=i) for i in range(HORIZON["nevoeiro"])],
+                                    out, log)
+    except Exception as e:  # noqa: BLE001
+        log(f"  triagem do nevoeiro falhou: {e}")
+        out["failed"].append("nevoeiro")
+
     # ---- members (a phenomenon that fails is marked, so its events are not cancelled)
     from . import rain1h
     ens_data = {}
@@ -490,6 +513,7 @@ async def analyse(run: dt.datetime, log=print) -> dict:
             ("mar", sea_days, lambda: waves.ens_daily(run, sea_days, log)),
             ("neve", snow_days, lambda: snow.ens_daily(run, snow_days, log)),
             ("trovoada", storm_days, lambda: storms.ens_daily(run, storm_days, log)),
+            ("nevoeiro", fog_days, lambda: fog.ens_daily(run, fog_days, log)),
             # 1-h rain: hourly ICON-EU-EPS, which screens its own days (exactly, see rain1h.py)
             ("chuva1h", [run], lambda: rain1h.ens_daily(run, out, log))]
     if "calor" not in out["screen"]:        # the temperature screening (IFS) failed
@@ -525,6 +549,10 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
     # sea state: levels already computed per member (south-easterly swell rule in the Algarve)
     lev = {d: per_day[d]["lev"] if "lev" in per_day[d] else levels(per_day[d]["pts"], thr, phen)
            for d in days}                                                   # (50, npts)
+    if phen == "vento":                    # Azores: the gust or the mean wind, whichever is higher
+        from . import meanwind
+        lev = {d: meanwind.merge_levels(lev[d], per_day[d]["vm"]) if "vm" in per_day[d] else lev[d]
+               for d in days}
     if phen in ("calor", "frio"):          # ≥ 48 h: the level must hold on two consecutive days
         pers = {}
         for d in days:
@@ -550,12 +578,21 @@ async def _finish_async(phen, per_day, highland, slices, out, rdir, log):
     elif phen == "trovoada":
         from . import storms
         det = await storms.deterministic(flag_days, log) if flag_days else {}
+    elif phen == "nevoeiro":
+        from . import fog
+        d0 = first_day(dt.datetime.fromisoformat(out["run"]))
+        det = await fog.deterministic(flag_days, log, d0=d0) if flag_days else {}
     else:
         det = await deterministic(phen, flag_days, log) if flag_days else {}
     sig = {}
     for d in days:
         sig[d.isoformat()] = _summary(phen, d, per_day[d]["pts"], lev[d], per_day[d].get("thr", thr),
                                       det, slices)
+    if phen == "vento":
+        from . import meanwind
+        for d in days:
+            if "vm" in per_day[d]:
+                meanwind.annotate(sig[d.isoformat()], per_day[d]["vm_est"], per_day[d]["vm"])
     out["signals"][phen] = sig
     out.setdefault("det_runs", {})[phen] = {m: v["run"] for m, v in det.items()}
     # arrays for the figures

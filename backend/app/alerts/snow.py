@@ -25,8 +25,10 @@ a band is the largest estimate over the district's grid points. Orographic enhan
 the precipitation is not modelled (it underestimates high ground); a cold pool at low
 levels under warmer air aloft is partly caught through the 850 hPa temperature.
 
-Areas: the 18 mainland districts and the mountains of Madeira (MRM). The Azores and the
-Madeira coasts are left out (snow there is confined to summits the points cannot represent).
+Areas: the 18 mainland districts, the mountains of Madeira (MRM) and the three groups of
+the Azores (the Central group through Pico, whose upper slopes are the only ground there
+above 1000 m). The Madeira coasts are left out: snow there would need the sea-level
+temperature of a mid-latitude winter, which the island never gets.
 """
 from __future__ import annotations
 
@@ -54,11 +56,14 @@ WINDOW = 6               # h
 # in Castelo Branco) does not decide the warning of a whole district. From the Copernicus
 # DEM GLO-90 (© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided
 # under COPERNICUS by the European Union and ESA) inside the Natural Earth district outlines
-# (computed 2026-11-22; MRM: the whole island of Madeira).
+# (computed 2026-11-22; MRM: the whole island of Madeira; the Azores, computed 2026-11-23:
+# the land of each group — Ocidental 157 km², summit 906 m; Central 1324 km², Pico 2308 m,
+# 28 km² above 1000 m; Oriental 843 km², summit 1085 m).
 TOPS = {
     "VCT": 1210, "BRG": 1200, "PTO": 980, "VRL": 1300, "BGC": 1180, "AVR": 940,
     "VIS": 1160, "GDA": 1670, "CBR": 1040, "CBO": 1440, "LRA": 760, "STM": 470, "PTG": 730,
     "LSB": 360, "STB": 270, "EVR": 460, "BJA": 460, "FAR": 560, "MRM": 1470,
+    "AOC": 610, "ACE": 1030, "AOR": 760,
 }
 
 

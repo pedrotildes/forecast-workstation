@@ -35,6 +35,20 @@ originais (GRIB2):
 IMPORTANTE: a aplicação PRECISA de ligação à Internet para funcionar
 (vai buscar os dados dos modelos, satélite e radar em tempo real).
 
+VERSÃO 1.5.5 (23/11/2026)
+  • Avisos: passam a cobrir todos os critérios do IPMA.
+  • Nevoeiro persistente (laranja ≥ 72 h, vermelho ≥ 96 h), em todas as
+    regiões, até 4 dias. Os modelos não veem o nevoeiro dos vales, por
+    isso contam-se os dias seguidos do regime que o mantém: ar saturado
+    de madrugada, tarde húmida, vento fraco e sem chuva. Validado com o
+    episódio laranja de dezembro de 2024 no interior Norte.
+  • Açores: o vento médio (75 a 87 km/h laranja) entra no aviso de vento,
+    ao lado das rajadas; a chuva em 1 hora vem do ensemble global ICON-EPS
+    do DWD (o ICON-EU não chega lá); e a neve passa a ser avaliada nos
+    três grupos de ilhas.
+  Se já tinhas uma versão anterior, substitui-a por esta (os dados e os
+  eventos arquivados mantêm-se).
+
 VERSÃO 1.5.4 (23/11/2026)
   • Avisos: também a trovoada, com os critérios do IPMA revistos em
     agosto de 2026 (laranja: fenómenos severos localizados, como granizo

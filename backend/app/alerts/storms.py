@@ -93,46 +93,9 @@ WIND = ("u925", "v925", "u500", "v500")
 
 
 async def _members_some(run: dt.datetime, name: str, step: int, want: np.ndarray) -> dict | None:
-    """Only the members ``want`` ((50,) bool) of one pressure-level field at one step, cropped
-    like ens.members; the others are NaN. Cached member by member (``have``), so a later call
-    that needs more members fetches just those."""
-    import httpx
-
-    from ..config import HTTP_TIMEOUT, USER_AGENT
+    """Only the members ``want`` of one wind field at one step (ens.members_some)."""
     from . import ens
-    p = ens._cache_path(run, f"{name}m", step)
-    have = np.zeros(50, bool)
-    vals = lats = lons = None
-    if p.exists():
-        z = np.load(p)
-        have, vals, lats, lons = z["have"].copy(), z["values"].astype(np.float32), z["lats"], z["lons"]
-    miss = want & ~have
-    if miss.any():
-        prm, lev = ens.MEMBER_PARAMS[name][0], ens.MEMBER_LEVEL[name]
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as c:
-            try:
-                url, entries = await ens.MEMBERS._index(c, run, step)
-            except FieldUnavailable:
-                return None
-            todo = [e for e in entries if e.get("param") == prm and e.get("type") == "pf"
-                    and e.get("levtype") == "pl" and str(e.get("levelist")) == str(lev)
-                    and 1 <= int(e.get("number", 0)) <= 50 and miss[int(e["number"]) - 1]]
-            blobs = await asyncio.gather(*(ens._get(c, url, e) for e in todo))
-        fields = await asyncio.to_thread(lambda: [ens._decode_crop(b) for b in blobs])
-        if fields:
-            if vals is None:
-                lats, lons = fields[0].lats, fields[0].lons
-                vals = np.full((50, len(lats), len(lons)), np.nan, np.float32)
-            for e, f in zip(todo, fields):
-                k = int(e["number"]) - 1
-                vals[k], have[k] = f.values, True
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix(".part.npz")
-            np.savez_compressed(tmp, lats=lats, lons=lons, values=vals.astype(np.float16), have=have)
-            tmp.replace(p)
-    if vals is None:
-        return None
-    return {"lats": lats, "lons": lons, "values": vals, "have": have}
+    return await ens.members_some(run, name, step, want)
 
 
 async def ens_daily(run: dt.datetime, days: list[dt.date], log, prune: bool = True) -> dict:

@@ -768,7 +768,7 @@ async function renderAlertPanel() {
   }
   const P = d.phenomena[e.phen] || {};
   const u = { vento: "km/h", chuva: "mm", chuva1h: "mm", calor: "°C", frio: "°C", mar: "m", neve: "cm",
-    trovoada: "m²/s²" }[e.phen] || "";
+    trovoada: "m²/s²", nevoeiro: "h" }[e.phen] || "";
   const fv = (v) => (e.phen === "mar" ? Number(v).toFixed(1) : Math.round(v));
   const rows = Object.entries(e.areas || {}).map(([c, a]) => {
     const det = Object.entries(a.det || {}).map(([m, x]) =>

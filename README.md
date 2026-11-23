@@ -252,19 +252,32 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   áreas da Madeira e os 3 grupos dos Açores (vilas e pontos do interior), com os códigos do IPMA.
 - **Fenómenos e critérios** (`app/alerts/criteria.py`, página «Critérios de Emissão dos Avisos
   Meteorológicos» do IPMA): rajadas (91 km/h; 111 nas terras altas, acima de 700 m de
-  orografia do modelo a 0,25°; Açores 101), precipitação em 6 h (41 mm) e em 1 h (21 mm), tempo quente e frio (limiares
+  orografia do modelo a 0,25°; Açores 101, ou vento médio 75 km/h), precipitação em 6 h (41 mm) e em 1 h (21 mm), tempo quente e frio (limiares
   de cada distrito durante ≥ 48 h = dois dias seguidos); vermelho: > 130 km/h, > 60 mm e os
-  limiares vermelhos de cada distrito, > 40 mm em 1 h; agitação marítima (altura significativa das ondas
+  limiares vermelhos de cada distrito, > 40 mm em 1 h, vento médio > 87 km/h nos Açores; agitação marítima (altura significativa das ondas
   5 m, vermelho > 7 m; Açores 7 e 9 m; costa sul do Algarve com ondulação de sueste 3 e 5 m);
   neve acumulada por faixa de altitude (abaixo de 1000 m 6 cm, vermelho > 15; 1000–1600 m 11 e
-  30 cm; acima de 1600 m 26 e 50 cm), em 24 h; trovoada (índice de tempestade severa, abaixo).
-  Fica de fora o nevoeiro.
+  30 cm; acima de 1600 m 26 e 50 cm), em 24 h; trovoada (índice de tempestade severa, abaixo);
+  nevoeiro persistente (≥ 72 h, vermelho ≥ 96 h, abaixo). São todos os critérios do IPMA.
+- **Vento médio nos Açores** (`app/alerts/meanwind.py`): o IPMA avisa nos Açores também pela
+  velocidade média (laranja 75–87 km/h, vermelho > 87). Entra no aviso de vento, como no IPMA: num
+  grupo, um membro chega ao nível pela rajada ou pelo vento médio (vento a 10 m, de 3 em 3 h),
+  o que for maior. O vento a 10 m custa ~1,7 MB por membro e passo, mas o vento do modelo nunca
+  passa da rajada máxima da janela que acaba nesse passo: nos temporais de 19–20/01/2025,
+  11/03/2025 e 23–24/02/2026 a menor razão rajada/vento foi 1,09 e um vento médio ≥ 75 km/h veio
+  sempre com rajadas ≥ 93 km/h. Por isso só se descarrega para os membros com rajada ≥ 82 km/h
+  num ponto dos Açores, e só nos dias em que pelo menos 20 % deles a têm num grupo. Na prática
+  decide a rajada (20/01/2025, grupo Ocidental: 58 % de laranja pelo vento médio, 94 % pela
+  rajada); o vento médio sobe sobretudo a probabilidade de vermelho (aí, de 4 % para 12 %).
 - **Chuva em 1 h** (`app/alerts/rain1h.py`): o ensemble do ECMWF só publica a precipitação de
   3 em 3 h, por isso aqui o ensemble é o **ICON-EU-EPS do DWD** (40 membros, grelha icosaédrica
   com células a ~10 km, precipitação horária até +48 h, runs de 6 em 6 h; cada ficheiro traz os
   40 membros de um passo para a Europa, ~10 MB). Pontos: as células do ICON dentro de cada
-  distrito (~50 por distrito) e, na Madeira, a célula mais próxima de cada vila; os Açores ficam
-  fora do domínio do ICON-EU. Triagem exata: a chuva é acumulada desde o início da run, por isso
+  distrito (~50 por distrito) e, na Madeira, a célula mais próxima de cada vila. Os Açores ficam
+  fora do domínio do ICON-EU: aí o ensemble é o **ICON-EPS global** da mesma run (40 membros,
+  células a ~20 km, chuva horária até +48 h só nas runs das 00 e 12 UTC; a célula mais próxima
+  de cada vila, todas a menos de 14 km). Um ficheiro global tem ~32 MB por passo, por isso só é
+  lido quando o ECMWF dá ≥ 20 % de 25 mm em 24 h num ponto dos Açores. Triagem exata: a chuva é acumulada desde o início da run, por isso
   uma hora com ≥ 21 mm obriga a ≥ 21 mm no dia e nas 6 h que a contêm; primeiro lêem-se os totais
   do dia, depois os de 6 h, e só as janelas de 6 h em que algum membro chega ao limiar laranja
   descarregam os ficheiros horários (dia seco: 2 ficheiros). Modelos de apoio: os que têm chuva
@@ -303,6 +316,33 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   vê portanto os dias de tempestades severas **generalizadas**; as trovoadas isoladas e os avisos
   subidos no próprio dia escapam-lhe, e uma frente fria muito instável pode dar um alerta onde o
   IPMA fica no amarelo.
+- **Nevoeiro** (`app/alerts/fog.py`): o IPMA avisa pela **persistência** do nevoeiro (amarelo
+  ≥ 48 h, laranja ≥ 72 h, vermelho ≥ 96 h). Os dados abertos do ECMWF não trazem a visibilidade
+  e a grelha de 0,25° não vê os vales onde o nevoeiro persiste: no episódio laranja de
+  26/12/2024–02/01/2025 (Bragança, Viseu, Guarda, Vila Real, «em especial em zonas de vale», com
+  sincelo) o IFS saturava todas as noites mas aquecia e secava um pouco todas as tardes. O que
+  os modelos mostram bem é o **regime** que mantém o nevoeiro, e é isso que se conta: um dia de
+  nevoeiro num ponto tem o ar saturado de madrugada (temperatura − ponto de orvalho a 2 m ≤ 0,5 K
+  às 06 UTC), a tarde húmida sob a inversão (≤ 3,5 K às 15 UTC), vento ≤ 3 m/s às 15 UTC e chuva
+  ≤ 1 mm no dia; uma área tem um dia de nevoeiro quando um ponto o tem; a duração é 24 h × os
+  dias seguidos (laranja ao 3.º dia, como o IPMA fez em 28/12/2024). Os dias antes da run vêm do
+  IFS (a run das 00 UTC de cada dia, o mesmo teste). Vermelho só com 4 dias de nevoeiro que não
+  levanta (≤ 1 K às 15 UTC): nunca aconteceu nos dois invernos verificados, e o IPMA manteve o
+  episódio de 2024 em laranja durante oito dias. Calibração no IFS (run das 00 UTC de cada dia,
+  240 dias de novembro a fevereiro de 2024/25 e 2025/26): sequências de ≥ 3 dias só no episódio
+  laranja (Vila Real 8 dias, Bragança 7, Viseu 7, Guarda 4); de 2 dias, o amarelo de
+  30–31/12/2025 (Bragança, Guarda, Vila Real) e quatro outras; sem o teste do vento Setúbal
+  chegava a 3. Com o ensemble do ECMWF (runs das 00 UTC): para 28/12/2024, a run de 24/12 dava
+  Bragança 86 %, Guarda 76 %, Vila Real 76 %, Viseu 60 %; a de 26/12, 78/62/48/28 %; a de 27/12
+  (já com os dias anteriores) Bragança 92 %, Vila Real 76 % e Viseu 72 % no dia 27 — o alerta
+  sairia para os quatro distritos entre 24 e 27/12; o fim do episódio (30/12–02/01) fica
+  subestimado. No amarelo de 31/12/2025 a mediana era 48 h e o laranja ≤ 26 %; nos dois falsos do
+  IFS (Setúbal 9/1/2025, Açores 2/12/2024) ≤ 4 %. Downloads: o ensemble só é lido quando o IFS
+  mostra ≥ 3 dias seguidos numa área (com uma tarde mais tolerante, 4,5 K; nos dois invernos, só
+  no episódio de 2024 e em Setúbal a 9/1/2025); então a temperatura e o ponto de orvalho das 06 e
+  15 UTC de todos os membros (~130 MB por dia) e, só para os membros e dias que podem chegar às
+  72 h, o vento das 15 UTC e a chuva do dia (~1 GB por análise num episódio). Modelos de apoio:
+  IFS, GFS e ICON-EU (o AIFS não tem as 15 UTC), a um dia do limiar. Até 4 dias.
 - **Neve** (`app/alerts/snow.py`): a grelha de 0,25° alisa as serras (a Serra da Estrela fica
   com 865 m no IFS), por isso a neve não é lida do manto de neve dos modelos mas **estimada à
   altitude de cada faixa** a partir da precipitação e da temperatura de cada ponto: temperatura
@@ -311,8 +351,9 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   24 h que termina nele. Cada distrito é avaliado a 1000 m (ou menos, se não tiver terreno tão
   alto), a 1600 m e acima, até à sua **altitude representativa**: a cota acima da qual tem pelo
   menos 25 km² (modelo digital de terreno Copernicus GLO-90), para que um cume de poucos
-  hectares na fronteira não decida o aviso do distrito inteiro. Distritos do continente e
-  regiões montanhosas da Madeira; os Açores e as costas da Madeira ficam de fora. Validado com
+  hectares na fronteira não decida o aviso do distrito inteiro. Distritos do continente, regiões
+  montanhosas da Madeira e os três grupos dos Açores (Ocidental 610 m, Central 1030 m — o Pico,
+  com 28 km² acima de 1000 m —, Oriental 760 m); as costas da Madeira ficam de fora. Validado com
   o nevão de 20–21/12/2025: com a run de 19/12 00Z do ensemble, os seis distritos em laranja do
   IPMA (Viana, Braga, Vila Real, Viseu, Guarda, Castelo Branco) tinham 62–100 % e os quatro em
   amarelo (Porto, Bragança, Aveiro, Coimbra) 8–22 %.
@@ -324,13 +365,14 @@ há **certeza grande** de chegar ao nível laranja ou vermelho dos critérios do
   de bytes e recortados a Portugal; uma área chega ao nível num membro quando algum dos seus
   pontos chega. Para poupar downloads, os membros só são lidos onde os produtos de
   probabilidade do ECMWF (`ep`: rajadas ≥ 90 km/h, chuva ≥ 25 mm/24 h, ondas acima de 2, 4 e
-  6 m), a Tmáx/Tmín do IFS, a neve estimada pelo IFS (≥ 30 % do limiar) ou o índice de trovoada
-  do IFS (≥ 60 % do limiar) mostram alguma hipótese.
+  6 m), a Tmáx/Tmín do IFS, a neve estimada pelo IFS (≥ 30 % do limiar), o índice de trovoada
+  do IFS (≥ 60 % do limiar) ou os dias de nevoeiro do IFS (≥ 3 seguidos) mostram alguma hipótese.
 - **Certeza** (`app/alerts/events.py`, ajustável em `config.json`): ≥ 60 % dos membros
   (vermelho ≥ 50 %), ≥ 40 % já na run anterior, metade dos modelos determinísticos (IFS, AIFS,
   GFS, ICON-EU; no mar, IFS e GFS-Wave; na neve, a 40 % do limiar; na chuva em 1 h, ICON-EU e
-  GFS; na trovoada, IFS, GFS e ICON-EU a 40 % do limiar) perto do limiar e até 4 dias de
-  antecedência (calor e frio 6, chuva em 1 h e trovoada 2). Abaixo disso o
+  GFS; na trovoada, IFS, GFS e ICON-EU a 40 % do limiar; no nevoeiro, IFS, GFS e ICON-EU a um
+  dia do limiar) perto do limiar e até 4 dias de antecedência (calor e frio 6, chuva em 1 h e
+  trovoada 2). Abaixo disso o
   evento fica «em vigilância», só na app. Um evento confirmado mantém-se enquanto a
   probabilidade não cair abaixo de 25 % (não há alertas e cancelamentos alternados).
 - **Mensagens**: alerta (texto + 7 figuras: probabilidade, valor alto provável, membros por dia,

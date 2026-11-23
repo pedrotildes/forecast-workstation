@@ -38,6 +38,8 @@ MEMBER_PARAMS = {
     # way from the most unstable parcel below 350 hPa) and the wind at 925 and 500 hPa
     "mucape": ("mucape", "cape"),
     "u925": ("u",), "v925": ("v",), "u500": ("u",), "v500": ("v",),
+    # Azores mean wind (10-m wind) and fog (2-m dew point with 2t and tp)
+    "u10": ("10u",), "v10": ("10v",), "d2m": ("2d",),
 }
 # fields on pressure levels: name -> level (hPa); the others are single-level ("sfc")
 MEMBER_LEVEL = {"t850": 850, "u925": 925, "v925": 925, "u500": 500, "v500": 500}
@@ -146,6 +148,19 @@ async def latest_complete_run(min_step: int = 168) -> dt.datetime | None:
     return None
 
 
+def _convert(name: str, vals: np.ndarray, units: str) -> tuple[np.ndarray, str]:
+    """Member values in the units used by the alerts (mm, °C, km/h, hPa)."""
+    if name == "tp" and units.strip() == "m":
+        return vals * 1000.0, "mm"
+    if name in ("tmax", "tmin", "t2m", "t850", "d2m") and units.strip() == "K":
+        return vals - 273.15, "°C"
+    if name == "gust":
+        return vals * 3.6, "km/h"
+    if name == "msl":
+        return vals / 100.0, "hPa"
+    return vals, units
+
+
 async def members(run: dt.datetime, name: str, step: int) -> dict | None:
     """All 50 members of one field at one step, cropped to BOX:
     {"lats", "lons", "values" (50, ny, nx) float32, "units"}. None if not published."""
@@ -174,22 +189,64 @@ async def members(run: dt.datetime, name: str, step: int) -> dict | None:
         todo.sort(key=lambda e: int(e.get("number", 0)))
         blobs = await asyncio.gather(*(_get(c, url, e) for e in todo))
     fields = await asyncio.to_thread(lambda: [_decode_crop(b) for b in blobs])
-    vals = np.stack([f.values for f in fields]).astype(np.float32)
-    units = fields[0].units
-    if name == "tp" and units.strip() == "m":
-        vals, units = vals * 1000.0, "mm"
-    elif name in ("tmax", "tmin", "t2m", "t850") and units.strip() == "K":
-        vals, units = vals - 273.15, "°C"
-    elif name == "gust":
-        vals, units = vals * 3.6, "km/h"
-    elif name == "msl":
-        vals, units = vals / 100.0, "hPa"
+    vals, units = _convert(name, np.stack([f.values for f in fields]).astype(np.float32),
+                           fields[0].units)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".part.npz")
     np.savez_compressed(tmp, lats=fields[0].lats, lons=fields[0].lons,
                         values=vals.astype(np.float16), units=units)
     tmp.replace(p)
     return {"lats": fields[0].lats, "lons": fields[0].lons, "values": vals, "units": units}
+
+
+async def members_some(run: dt.datetime, name: str, step: int, want: np.ndarray) -> dict | None:
+    """Only the members ``want`` ((50,) bool) of one field at one step, cropped and converted
+    like members(); the others are NaN. Cached member by member (``have``), so a later call
+    that needs more members fetches just those; a complete members() cache is used as is.
+    Returns {"lats", "lons", "values" (50, ny, nx), "have" (50,)} or None."""
+    if _cache_path(run, name, step).exists():
+        m = await members(run, name, step)
+        if m is not None:
+            return {**m, "have": np.ones(50, bool)}
+    p = _cache_path(run, f"{name}m", step)
+    have = np.zeros(50, bool)
+    vals = lats = lons = None
+    if p.exists():
+        z = np.load(p)
+        have, vals, lats, lons = z["have"].copy(), z["values"].astype(np.float32), z["lats"], z["lons"]
+    miss = np.asarray(want, bool) & ~have
+    if miss.any():
+        lev = MEMBER_LEVEL.get(name)
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={"User-Agent": USER_AGENT}) as c:
+            try:
+                url, entries = await MEMBERS._index(c, run, step)
+            except FieldUnavailable:
+                return None
+            todo = []
+            for prm in MEMBER_PARAMS[name]:         # the first of the alternative params present
+                todo = [e for e in entries if e.get("param") == prm and e.get("type") == "pf"
+                        and (e.get("levtype") == "sfc" if lev is None
+                             else e.get("levtype") == "pl" and str(e.get("levelist")) == str(lev))
+                        and 1 <= int(e.get("number", 0)) <= 50 and miss[int(e["number"]) - 1]]
+                if todo:
+                    break
+            blobs = await asyncio.gather(*(_get(c, url, e) for e in todo))
+        fields = await asyncio.to_thread(lambda: [_decode_crop(b) for b in blobs])
+        if fields:
+            if vals is None:
+                lats, lons = fields[0].lats, fields[0].lons
+                vals = np.full((50, len(lats), len(lons)), np.nan, np.float32)
+            for e, f in zip(todo, fields):
+                k = int(e["number"]) - 1
+                vals[k] = _convert(name, f.values.astype(np.float32), f.units)[0]
+                have[k] = True
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".part.npz")
+            np.savez_compressed(tmp, lats=lats, lons=lons, values=vals.astype(np.float16), have=have)
+            tmp.replace(p)
+    if vals is None:
+        return None
+    return {"lats": lats, "lons": lons, "values": vals, "have": have}
 
 
 async def ep_fields(run: dt.datetime, names: list[str]) -> dict:

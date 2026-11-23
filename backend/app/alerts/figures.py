@@ -1,6 +1,8 @@
 """Figures of an alert event (sent to Telegram and shown in the app's «Avisos» tab).
-(Rain in 1 h: the ensemble is the DWD ICON-EU-EPS, 40 members, instead of the ECMWF ENS.
-Thunderstorms: the value is the severe-storm index of storms.py, in m²/s².)
+(Rain in 1 h: the ensemble is the DWD ICON-EU-EPS — the global ICON-EPS in the Azores — 40
+members, instead of the ECMWF ENS.
+Thunderstorms: the value is the severe-storm index of storms.py, in m²/s². Fog: hours of
+consecutive fog-regime days, fog.py; no plume.)
 
 1. probability map — ENS probability of reaching the orange criterion (peak of the
    event days), confirmed areas outlined, the probability of each area written on it;
@@ -32,7 +34,7 @@ from ..regions import CITIES, REGIONS
 from . import criteria as C
 from .areas import areas, by_code, district_geometry
 from .detect import DOMAIN, RUNS_DIR, pointset
-from .messages import MODEL_SHORT, alt_text, fmt_day, fmt_days, fmt_run, pct, src_run, unit
+from .messages import MODEL_SHORT, alt_text, fmt_day, fmt_days, fmt_run, icon_name, pct, src_run, unit
 
 # 1-h rain: the hours not fetched (no member near the threshold) are NaN in the series
 warnings.filterwarnings("ignore", "All-NaN slice encountered", RuntimeWarning)
@@ -58,27 +60,35 @@ STORM_FILL = Fill([200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1500, 200
                   _interp(["#e8f4d9", "#bfe3a0", "#7fc97f", "#ffe680", "#ffbf47", "#ff8c1a",
                            "#f05a28", "#d7191c", "#a50f50", "#7a0177", "#4a1486"], 12),
                   extend="max", over="#1a0033", transparent_under=True)
+FOG_FILL = Fill([24, 48, 72, 96, 120, 144],
+                _interp(["#e3e7ee", "#b9c3d3", "#f4b183", "#e76f51", "#9d0208", "#5a0a1f"], 6),
+                extend="max", over="#2b0510", transparent_under=True)
 VAR_OF = {"vento": "gust", "chuva": "precip", "calor": "tmax_day", "frio": "tmin_day", "mar": "swh",
-          "neve": "precip", "chuva1h": "precip", "trovoada": "mucape"}
+          "neve": "precip", "chuva1h": "precip", "trovoada": "mucape", "nevoeiro": "t2m"}
 HOW = {"vento": "max", "chuva": "max", "calor": "max", "frio": "min", "mar": "max", "neve": "max",
-       "chuva1h": "max", "trovoada": "max"}
-FILL_OF = {"mar": WAVE_FILL, "neve": SNOW_FILL, "trovoada": STORM_FILL}
+       "chuva1h": "max", "trovoada": "max", "nevoeiro": "max"}
+FILL_OF = {"mar": WAVE_FILL, "neve": SNOW_FILL, "trovoada": STORM_FILL, "nevoeiro": FOG_FILL}
+FOG_WHAT = "horas seguidas de nevoeiro persistente (dias seguidos do regime de nevoeiro × 24 h)"
 STORM_WHAT = "índice de tempestade severa √(2·CAPE) × cisalhamento 925–500 hPa (m²/s²), onde há precipitação"
 SNOW_ALT = "em 24 h, à altitude representativa de cada distrito (1000 m fora de Portugal)"
 FOOT = "Dados: © ECMWF Open Data (CC BY 4.0), NOAA GFS, DWD ICON-EU · Critérios de aviso: IPMA"
 FOOT_SEA = "Dados: © ECMWF Open Data (CC BY 4.0, ondas: ensemble e IFS), NOAA GFS-Wave · Critérios de aviso: IPMA"
-FOOT_RAIN1 = "Dados: © DWD (ICON-EU-EPS e ICON-EU, dados abertos), NOAA GFS · Critérios de aviso: IPMA"
+FOOT_RAIN1 = "Dados: © DWD (ICON-EU-EPS, ICON-EPS e ICON-EU, dados abertos), NOAA GFS · Critérios de aviso: IPMA"
 
 
 def foot(phen: str) -> str:
     return FOOT_SEA if phen == "mar" else FOOT_RAIN1 if phen == "chuva1h" else FOOT
 
 
+def ev_groups(ev: dict) -> set[str]:
+    return {by_code()[c].group for c in ev["areas"]}
+
+
 def ens_head(ev: dict, z: dict | None = None) -> str:
     """First header line of the ensemble maps: which ensemble, which run."""
     if ev["phen"] == "chuva1h":
         src = str(z["src_run"]) if z is not None and "src_run" in z else ev.get("src_run") or ev["last_run"]
-        return f"DWD ICON-EU-EPS (40 membros)   ·   Run {fmt_run(src)}"
+        return f"DWD {icon_name(ev_groups(ev))} (40 membros)   ·   Run {fmt_run(src)}"
     return f"ECMWF ENS (50 membros)   ·   Run {fmt_run(ev['last_run'])}"
 
 
@@ -136,13 +146,33 @@ def area_grid(lats, lons) -> np.ndarray:
     return _area_grid(sig)
 
 
+FINE = 0.05                                 # ° — grid of the maps painted per area
+
+
+def fine_grid() -> tuple[np.ndarray, np.ndarray]:
+    from .areas import BOX
+    lon0, lon1, lat0, lat1 = BOX
+    return np.arange(lat0, lat1 + 1e-6, FINE), np.arange(lon0, lon1 + 1e-6, FINE)
+
+
+def area_fill(values: dict[str, float], lats, lons) -> np.ndarray:
+    """(ny, nx) the value of each area on its nodes (NaN outside the areas) — for the
+    phenomena decided per area, not per point (fog)."""
+    ag = area_grid(lats, lons)
+    out = np.full(ag.shape, np.nan, np.float32)
+    for code, v in values.items():
+        out[ag == code] = v
+    return out
+
+
 def threshold_grid(phen: str, lats, lons, region_id: str) -> np.ndarray:
     """(2, ny, nx) orange/red thresholds for the probability map (NaN where not defined)."""
     ny, nx = len(lats), len(lons)
-    if phen in ("vento", "chuva", "mar", "neve", "chuva1h", "trovoada"):
+    if phen in ("vento", "chuva", "mar", "neve", "chuva1h", "trovoada", "nevoeiro"):
         az = region_id == "azores"
         t = {"vento": C.GUST_AZORES if az else C.GUST, "chuva": C.RAIN6, "chuva1h": C.RAIN1,
-             "mar": C.WAVES_AZORES if az else C.WAVES, "neve": C.snow(0.0), "trovoada": C.STORM}[phen]
+             "mar": C.WAVES_AZORES if az else C.WAVES, "neve": C.snow(0.0), "trovoada": C.STORM,
+             "nevoeiro": C.FOG}[phen]
         return np.stack([np.full((ny, nx), t["laranja"]), np.full((ny, nx), t["vermelho"])]).astype(np.float32)
     ag = area_grid(lats, lons)
     out = np.full((2, ny, nx), np.nan, np.float32)
@@ -187,6 +217,14 @@ def prob_map(ev: dict, z: dict, region_id: str) -> bytes:
     thr = threshold_grid(phen, lats, lons, region_id)
     days = [d for d in ev["days"] if f"grid_{d}" in z]
     probs = []
+    if phen == "nevoeiro":                  # decided per area: each district painted with its own
+        from .fog import fog_points
+        codes = fog_points().codes
+        best = {c: max(float(np.mean(z[f"lev_{d}"][:, k] >= 1)) for d in days) * 100
+                for k, c in enumerate(codes)}
+        lats, lons = fine_grid()
+        probs.append(area_fill(best, lats, lons))
+        days = []
     for d in days:
         g = z[f"grid_{d}"].astype(np.float32)                       # (50, ny, nx)
         if f"levgrid_{d}" in z:                                    # snow: any altitude band
@@ -199,24 +237,29 @@ def prob_map(ev: dict, z: dict, region_id: str) -> bytes:
     p = np.minimum(np.nanmax(np.stack(probs), 0), 99.9).astype(np.float32)   # 100 % in the top class
     pts, geoms = _labels(ev, region_id)
     r = REGIONS[region_id]
-    what = {"vento": f"rajada ≥ {C.fmt_threshold('vento', (C.GUST_AZORES if region_id == 'azores' else C.GUST)['laranja'])}",
+    what = {"vento": f"rajada ≥ {C.fmt_threshold('vento', (C.GUST_AZORES if region_id == 'azores' else C.GUST)['laranja'])}"
+                     + (" (nas áreas: rajada ou vento médio ≥ 75 km/h)" if region_id == "azores" else ""),
             "chuva": "≥ 41 mm em 6 h", "chuva1h": "≥ 21 mm em 1 h", "calor": "Tmáx ≥ limiar laranja do distrito (≥ 48 h no texto)",
             "frio": "Tmín ≤ limiar laranja do distrito",
             "mar": f"ondas (Hs) ≥ {(C.WAVES_AZORES if region_id == 'azores' else C.WAVES)['laranja']:.0f} m",
             "neve": "neve ≥ limiar laranja (6, 11 ou 26 cm em 24 h, conforme a altitude) "
                     "numa das cotas do distrito",
-            "trovoada": f"índice de tempestade severa ≥ {C.STORM['laranja']:.0f} m²/s² com precipitação"}[phen]
+            "trovoada": f"índice de tempestade severa ≥ {C.STORM['laranja']:.0f} m²/s² com precipitação",
+            "nevoeiro": "nevoeiro persistente ≥ 72 h (em cada área)"}[phen]
     job = {"region": region_id, "lats": lats, "lons": lons, "layers": [
         {"type": "fill", "var": "t2m", "data": p, "fill_style": PROB_FILL,
-         "label": f"Probabilidade (%) de {what} — máximo nos dias do evento"},
-        {"type": "contour", "var": "t2m", "data": np.nan_to_num(p), "levels": [50, 80],
-         "color": "#222222", "width": 0.9, "labels": False, "extrema": False},
-        {"type": "areas", "geoms": geoms},
-        {"type": "labels", "points": pts, "size": 8.0}],
+         "label": f"Probabilidade (%) de {what} — máximo nos dias do evento"}]
+        + ([] if phen == "nevoeiro" else
+           [{"type": "contour", "var": "t2m", "data": np.nan_to_num(p), "levels": [50, 80],
+             "color": "#222222", "width": 0.9, "labels": False, "extrema": False}])
+        + [{"type": "areas", "geoms": geoms},
+           {"type": "labels", "points": pts, "size": 8.0}],
         "header": {"left1": ens_head(ev, z),
                    "left2": f"Probabilidade de chegar ao aviso laranja · {fmt_days(ev['days'], True)}",
-                   "layers": "Sombreado: em cada ponto · linhas finas: 50 % e 80 % · número: na área "
-                             "(algum ponto chega ao laranja) · contorno: distrito confirmado",
+                   "layers": ("Sombreado e número: em cada área (um dia de nevoeiro quando um ponto o tem) · "
+                              "contorno: distrito confirmado" if phen == "nevoeiro" else
+                              "Sombreado: em cada ponto · linhas finas: 50 % e 80 % · número: na área "
+                              "(algum ponto chega ao laranja) · contorno: distrito confirmado"),
                    "right1": C.PHENOMENA[phen]["name"], "right2": r.name},
         "footer": foot(phen)}
     png, _ = render_job(job)
@@ -230,20 +273,28 @@ def high_map(ev: dict, z: dict, region_id: str) -> bytes:
         peak = [d for d in ev["days"] if f"grid_{d}" in z][0]
     g = z[f"grid_{peak}"].astype(np.float32)
     q = 10 if phen == "frio" else 90
-    arr = np.nanpercentile(g, q, axis=0).astype(np.float32)
+    if phen == "nevoeiro":                  # per area, as the warning
+        from .fog import fog_points
+        pts = z[f"pts_{peak}"].astype(np.float32)
+        glat, glon = fine_grid()
+        arr = area_fill({c: float(np.percentile(pts[:, k], q)) for k, c in enumerate(fog_points().codes)},
+                        glat, glon)
+    else:
+        arr = np.nanpercentile(g, q, axis=0).astype(np.float32)
     var = VAR_OF[phen]
     pts, geoms = _labels(ev, region_id)
     what = {"vento": "rajada máxima do dia (km/h)", "chuva": "maior precipitação em 6 h no dia (mm)",
             "chuva1h": "maior precipitação em 1 h no dia (mm)",
             "calor": "temperatura máxima (°C)", "frio": "temperatura mínima (°C)",
             "mar": "altura significativa das ondas (m)",
-            "neve": "neve acumulada (cm) " + SNOW_ALT, "trovoada": STORM_WHAT}[phen]
-    layers = [{"type": "fill", "var": var, "data": arr,
+            "neve": "neve acumulada (cm) " + SNOW_ALT, "trovoada": STORM_WHAT, "nevoeiro": FOG_WHAT}[phen]
+    layers = [{"type": "fill", "var": var,
+               "data": arr + 0.5 if phen == "nevoeiro" else arr,      # 72 h in the 72–96 class
                "label": f"Percentil {q} dos {n_members(z, phen)} membros: {what}",
                **({"fill_style": FILL_OF[phen]} if phen in FILL_OF else {})}]
     if phen not in ("mar", "neve"):         # city values: the wave grids have nothing on land
         layers.append({"type": "values", "var": var, "fmt": "%.0f",
-                       "data": np.where(arr > 0, arr, np.nan) if phen == "trovoada" else arr})
+                       "data": np.where(arr > 0, arr, np.nan) if phen in ("trovoada", "nevoeiro") else arr})
     layers.append({"type": "areas", "geoms": geoms})
     if phen == "mar":
         layers.append({"type": "labels", "points": pts, "size": 8.0})
@@ -256,11 +307,13 @@ def high_map(ev: dict, z: dict, region_id: str) -> bytes:
             lab.append((ar.label[1], ar.label[0], f"{ar.name.split(' — ')[-1]}\n{a['z']} m: {a['p90']:.0f} cm",
                         LEVEL_COLOR[a["status"]]))
         layers.append({"type": "labels", "points": lab, "size": 8.0})
-    job = {"region": region_id, "lats": z["lats"], "lons": z["lons"], "layers": layers,
+    jl = fine_grid() if phen == "nevoeiro" else (z["lats"], z["lons"])
+    job = {"region": region_id, "lats": jl[0], "lons": jl[1], "layers": layers,
         "header": {"left1": ens_head(ev, z),
                    "left2": f"Valor alto provável: {'só 1 em cada 10 membros abaixo' if phen == 'frio' else 'só 1 em cada 10 membros acima'} · "
                             f"{fmt_day(dt.date.fromisoformat(peak), True)}",
-                   "layers": f"Percentil {q} {'do' if phen == 'trovoada' else 'da'} {what} em cada ponto"
+                   "layers": f"Percentil {q} {'do' if phen == 'trovoada' else 'das' if phen == 'nevoeiro' else 'da'} {what} "
+                             f"em cada {'área' if phen == 'nevoeiro' else 'ponto'}"
                              + (" · probabilidade de laranja em cada área" if phen == "mar" else
                                 " · nos distritos: percentil 90 na cota decisiva" if phen == "neve" else
                                 " · valores nas cidades (abaixo de 21 mm, só as horas analisadas)"
@@ -342,7 +395,7 @@ def boxes(ev: dict, z: dict, det: dict) -> bytes:
                  f"{fmt_run(src_run(ev) if phen == 'chuva1h' else ev['last_run'])}",
                  x=0.01, ha="left", fontsize=12.5, fontweight="bold", color="#0d1b2a")
     fig.text(0.01, 0.005, "Caixas: 25–75 % dos membros, bigodes 10–90 %, pontos: membros extremos · "
-             f"tracejado laranja/vermelho: {'limiares do índice' if phen == 'trovoada' else 'limiares IPMA'} · "
+             f"tracejado laranja/vermelho: {'limiares do índice' if phen == 'trovoada' else 'limiares IPMA (aqui o vermelho exige nevoeiro que não levanta)' if phen == 'nevoeiro' else 'limiares IPMA'} · "
              "losangos: modelos determinísticos · fundo: dias do evento", fontsize=7.8, color="#555")
     fig.tight_layout(rect=(0, 0.02, 1, 0.97))
     return _fig_png(fig)
@@ -440,7 +493,7 @@ def trend(ev: dict) -> bytes | None:
     ax.set_xticks(xs, [f"{x.day} {x:%H}h" for x in xs], fontsize=9)
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower right", ncol=2)
-    src = ("análises sucessivas do ICON-EU-EPS (uma por run do ECMWF)" if ev["phen"] == "chuva1h"
+    src = (f"análises sucessivas do {icon_name(ev_groups(ev))} (uma por run do ECMWF)" if ev["phen"] == "chuva1h"
            else "runs do ensemble do ECMWF")
     ax.set_title(f"Como a certeza evoluiu: {src} para {fmt_days(ev['days'])}",
                  loc="left", fontsize=11.5, fontweight="bold")
@@ -502,10 +555,23 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
     from . import waves
     from . import rain1h
     from . import storms
+    from . import fog
     mids = (("ifs_wave", "gfs_wave") if phen == "mar" else rain1h.DET if phen == "chuva1h"
-            else storms.DET if phen == "trovoada" else ("ecmwf", "aifs", "gfs", "icon_eu"))
+            else storms.DET if phen == "trovoada" else fog.DET if phen == "nevoeiro"
+            else ("ecmwf", "aifs", "gfs", "icon_eu"))
     for mid in mids:
-        if phen in ("chuva1h", "trovoada"):
+        if phen == "nevoeiro":
+            from .detect import first_day
+            m = MODELS[mid]
+            mname = m.name
+            if not m.covers_box(*r.extent):
+                continue
+            try:
+                g = await fog.det_grid(mid, dt.date.fromisoformat(day),
+                                       first_day(dt.datetime.fromisoformat(ev["last_run"])))
+            except Exception:  # noqa: BLE001
+                g = None
+        elif phen in ("chuva1h", "trovoada"):
             m = MODELS[mid]
             mname = m.name
             if not m.covers_box(*r.extent):
@@ -546,7 +612,7 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
                    **({"fill_style": FILL_OF[phen]} if phen in FILL_OF else {})}]
         if phen not in ("mar", "neve"):      # thunderstorms: no "0" where there is no storm
             layers.append({"type": "values", "var": var, "fmt": "%.0f",
-                           "data": np.where(arr > 0, arr, np.nan) if phen == "trovoada" else arr})
+                           "data": np.where(arr > 0, arr, np.nan) if phen in ("trovoada", "nevoeiro") else arr})
         layers.append({"type": "areas", "geoms": geoms})
         job = {"region": region_id, "lats": lats, "lons": lons, "layers": layers,
             "header": {"left1": f"{mname} · run {fmt_run(run.isoformat())}",
@@ -571,7 +637,8 @@ async def models_panel(ev: dict, region_id: str) -> bytes | None:
             "chuva1h": "maior precipitação em 1 h", "calor": "temperatura máxima", "frio": "temperatura mínima",
             "mar": "altura significativa máxima das ondas",
             "neve": "neve acumulada " + SNOW_ALT,
-            "trovoada": "índice de tempestade severa (ICON-EU: CAPE da camada de mistura)"}[phen]
+            "trovoada": "índice de tempestade severa (ICON-EU: CAPE da camada de mistura)",
+            "nevoeiro": "horas seguidas de nevoeiro persistente nesta run"}[phen]
     fig.suptitle(f"Modelos determinísticos: {what} ({unit(phen)})", x=0.01, ha="left", fontsize=13,
                  fontweight="bold", color="#0d1b2a")
     fig.subplots_adjust(left=0.005, right=0.995, top=0.95, bottom=0.005, wspace=0.01, hspace=0.01)
@@ -614,6 +681,10 @@ async def synoptic(ev: dict, z: dict) -> bytes | None:
             enr = dt.datetime.fromisoformat(ev["last_run"])
             t_peak = enr + int(z[f"steps_{day.isoformat()}"][w]) * H - 9 * H
         preset, region = "t850", "iberia"
+    elif phen == "nevoeiro":                # the anticyclone and the low cloud at midday
+        code = _top_areas(ev, 1)[0]
+        t_peak = dt.datetime(day.year, day.month, day.day, 12)
+        preset, region = "clouds", ("iberia" if by_code()[code].group == "continente" else "nea")
     else:
         t_peak = dt.datetime(day.year, day.month, day.day, 12)
         preset, region = "t850", "iberia"

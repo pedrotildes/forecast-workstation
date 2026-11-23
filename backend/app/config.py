@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-VERSION = "1.5.4"
+VERSION = "1.5.5"
 FROZEN = getattr(sys, "frozen", False)   # running from a PyInstaller bundle
 
 

@@ -2,17 +2,19 @@
 
 Source: IPMA, «Critérios de Emissão dos Avisos Meteorológicos»
 https://www.ipma.pt/opencms/pt/enciclopedia/otempo/sam/index.html?page=criterios.xml
-(read 2026-11-20; IPMA announced further revisions — check it from time to time).
+(read 2026-11-20 and again 2026-11-23; IPMA announced further revisions — check it from time
+to time).
 
 IPMA writes integer ranges for observed values ("91 a 130 km/h"); model values are
 continuous, so a range "a–b" becomes ≥ a − 0.5 and "> b" becomes ≥ b + 0.5.
 
-Not used (the models cannot give them with confidence, or the data are missing): fog and
-the Azores mean-wind criterion. Rain in 1 h comes from an hourly ensemble that covers the
-mainland and Madeira only (rain1h.py). Thunderstorms are given by IPMA as expected phenomena,
-not numbers: they are read from a severe-storm index of the ENS members (storms.py). Snow is evaluated on the
-mainland and in the mountains of Madeira (not in the Azores nor on the Madeira coasts).
-Heat and cold need ≥ 48 h: here, two consecutive days.
+Every IPMA criterion is used. Some need another source or a reading of their own: rain in 1 h
+comes from hourly ensembles (rain1h.py: ICON-EU-EPS, and the global ICON-EPS in the Azores);
+thunderstorms are given by IPMA as expected phenomena, not numbers, and are read from a
+severe-storm index of the ENS members (storms.py); fog is warned on its duration and read as
+consecutive days of the fog regime of the models (fog.py); snow is estimated at the altitudes of
+each area (snow.py; the Madeira coasts are left out); the Azores mean wind joins the gusts
+in the wind warning (meanwind.py). Heat and cold need ≥ 48 h: here, two consecutive days.
 """
 from __future__ import annotations
 
@@ -29,16 +31,21 @@ PHENOMENA = {
     "neve": {"name": "Neve", "unit": "cm", "what": "neve acumulada em 24 h", "icon": "❄️"},
     "trovoada": {"name": "Trovoada", "unit": "m²/s²", "what": "índice de tempestade severa",
                  "icon": "⛈️"},
+    "nevoeiro": {"name": "Nevoeiro persistente", "unit": "h", "what": "duração do nevoeiro",
+                 "icon": "🌫️"},
 }
 # IPMA "awarenessTypeName" of each phenomenon (official warnings JSON)
-IPMA_TYPE = {"vento": "Vento", "chuva": "Precipitação", "chuva1h": "Precipitação", "calor": "Tempo Quente",
-             "frio": "Tempo Frio", "mar": "Agitação Marítima", "neve": "Neve",
-             "trovoada": "Trovoada"}
+IPMA_TYPE = {"vento": "Vento", "chuva": "Precipitação", "chuva1h": "Precipitação",
+             "calor": "Tempo Quente", "frio": "Tempo Frio", "mar": "Agitação Marítima", "neve": "Neve",
+             "trovoada": "Trovoada", "nevoeiro": "Nevoeiro"}
 
 # ---------------------------------------------------------------- wind (max gust, km/h)
 GUST = {"laranja": 90.5, "vermelho": 130.5}
 GUST_HIGH = {"laranja": 110.5, "vermelho": 130.5}       # "nas terras altas" (mainland, Madeira)
 GUST_AZORES = {"laranja": 100.5, "vermelho": 130.5}
+# Azores only, «velocidade média do vento» 75–87 km/h, red > 87: a member reaches the level by
+# its gust or by its mean wind (meanwind.py)
+MEAN_WIND_AZORES = {"laranja": 74.5, "vermelho": 87.5}
 # IPMA does not define "terras altas". The 0.25° model orography is smooth (Serra da Estrela
 # shows as ~790 m), so ≥ 700 m here picks the high plateaus of Trás-os-Montes and the Beiras.
 HIGHLAND_M = 700.0
@@ -57,6 +64,11 @@ RAIN1 = {"laranja": 20.5, "vermelho": 40.5}             # 21–40 mm in 1 h, red
 # values, set on nine past cases (README).
 STORM = {"laranja": 900.0, "vermelho": 2000.0}
 STORM_CAPE = 500.0                                       # J/kg
+
+# ---------------------------------------------------------------- fog (duration, h)
+# «Visibilidade», duration: yellow ≥ 48 h, orange ≥ 72 h, red ≥ 96 h (all regions). Counted here in
+# days of the fog regime of the models (fog.py); red only for fog that does not lift.
+FOG = {"laranja": 72.0, "vermelho": 96.0}
 
 # ---------------------------------------------------------------- waves (Hs, m)
 WAVES = {"laranja": 5.0, "vermelho": 7.0}
@@ -136,6 +148,8 @@ def thresholds(phen: str, code: str, group: str) -> dict:
         return snow(0.0)
     if phen == "trovoada":
         return STORM
+    if phen == "nevoeiro":
+        return FOG
     raise KeyError(phen)
 
 
@@ -151,5 +165,7 @@ def fmt_threshold(phen: str, v: float) -> str:
         return f"{v + 0.5:.0f} cm"
     if phen == "trovoada":
         return f"{v:.0f} m²/s²"
+    if phen == "nevoeiro":
+        return f"{v:.0f} h"
     unit = PHENOMENA[phen]["unit"]
     return f"{v + 0.5:.0f} {unit}"
